@@ -1,26 +1,104 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Near-black with a whisper of indigo — not dead black */
+  --background: oklch(7.5% 0.009 285);
+  --surface:    oklch(11% 0.009 285);
+  --border:     oklch(100% 0 0 / 0.08);
+
+  /* Gold — the primary brand accent */
+  --gold:       oklch(72% 0.115 82);
+  --gold-muted: oklch(50% 0.08 82);
+  --gold-dim:   oklch(72% 0.115 82 / 0.12);
+
+  /* Arcane purple — secondary accent */
+  --arcane:     oklch(47% 0.24 292);
+  --arcane-dim: oklch(47% 0.24 292 / 0.12);
+
+  /* Text */
+  --foreground: oklch(93% 0.006 285);
+  --muted:      oklch(52% 0.008 285);
+  --subtle:     oklch(38% 0.006 285);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-gold:       var(--gold);
+  --color-muted:      var(--muted);
+  --font-display:     var(--font-cinzel);
+  --font-sans:        var(--font-raleway);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-raleway), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Magic card proportions: 63 × 88 mm → 5 : 7 */
+.card-aspect {
+  aspect-ratio: 5 / 7;
+}
+
+/* Spin button: slow ambient gold pulse */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 24px oklch(72% 0.115 82 / 0.2),
+      0 0 64px oklch(72% 0.115 82 / 0.07),
+      inset 0 0 24px oklch(72% 0.115 82 / 0.04);
+  }
+  50% {
+    box-shadow:
+      0 0 48px oklch(72% 0.115 82 / 0.55),
+      0 0 130px oklch(72% 0.115 82 / 0.18),
+      inset 0 0 36px oklch(72% 0.115 82 / 0.08);
+  }
+}
+
+/* Card reveal: brilliant flash that fades immediately */
+@keyframes reveal-flash {
+  0%   { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
+/* Summoning label: gentle luminance pulse */
+@keyframes text-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1; }
+}
+
+.glow-spin-btn {
+  animation: pulse-glow 2.8s ease-in-out infinite;
+}
+
+.summoning-text {
+  animation: text-pulse 1.6s ease-in-out infinite;
+}
+
+.reveal-flash {
+  animation: reveal-flash 0.7s ease-out forwards;
+}
+
+/* Honor reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
