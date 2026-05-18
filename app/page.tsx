@@ -1,11 +1,13 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useAnimate } from "framer-motion"
 import Image from "next/image"
 import {
   type ScryfallCard,
+  type ScryfallPrinting,
   fetchRandomCommander,
+  fetchCardPrintings,
   getCardImage,
   getCardOracleText,
   getEdhrecSlug,
@@ -353,6 +355,129 @@ function getCommanderTags(card: ScryfallCard): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ArtAccordion — pick alternate printings; collapses when only 1 art exists
+// ─────────────────────────────────────────────────────────────────────────────
+function ArtAccordion({
+  printings,
+  currentId,
+  onSelect,
+}: {
+  printings: ScryfallPrinting[]
+  currentId: string
+  onSelect: (p: ScryfallPrinting) => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (printings.length < 2) return null
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 cursor-pointer focus-visible:outline-none"
+        aria-expanded={open}
+      >
+        <motion.span
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+          className="inline-block leading-none"
+          style={{ color: "oklch(50% 0.08 82)", fontSize: "0.65rem" }}
+        >
+          ▾
+        </motion.span>
+        <span
+          style={{
+            fontFamily: "var(--font-raleway)",
+            fontSize: "0.72rem",
+            color: "oklch(50% 0.08 82)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {printings.length} arts available
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="art-list"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <div
+              className="flex gap-2 pt-2 pb-1 overflow-x-auto"
+              style={{ scrollbarWidth: "none" }}
+            >
+              {printings.map((p) => {
+                const img = getCardImage(p)
+                const isSelected = p.id === currentId
+                const isSLD = p.set === "sld"
+                const lastName = p.artist?.split(" ").pop() ?? ""
+
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => onSelect(p)}
+                    title={`${p.artist ?? "Unknown"}${isSLD ? " · Secret Lair" : ""}`}
+                    className="relative flex-shrink-0 flex flex-col rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/40"
+                    style={{
+                      width: 70,
+                      border: `1.5px solid ${isSelected ? "oklch(72% 0.115 82)" : "oklch(100% 0 0 / 0.1)"}`,
+                      background: "oklch(11% 0.009 285)",
+                      boxShadow: isSelected ? "0 0 10px oklch(72% 0.115 82 / 0.28)" : "none",
+                      transition: "border-color 0.15s, box-shadow 0.15s",
+                    }}
+                  >
+                    {img ? (
+                      <Image
+                        src={img}
+                        alt={p.artist ?? "art"}
+                        width={70}
+                        height={98}
+                        className="w-full h-auto"
+                      />
+                    ) : (
+                      <div className="w-full card-aspect" />
+                    )}
+
+                    {isSLD && (
+                      <div
+                        className="absolute top-0.5 right-0.5 px-1 py-px rounded leading-none font-black"
+                        style={{
+                          fontSize: "0.5rem",
+                          background: "oklch(72% 0.115 82)",
+                          color: "oklch(10% 0.02 82)",
+                          fontFamily: "var(--font-cinzel)",
+                        }}
+                      >
+                        SL
+                      </div>
+                    )}
+
+                    <div
+                      className="px-1 py-0.5 w-full text-center truncate"
+                      style={{
+                        fontSize: "0.55rem",
+                        color: isSelected ? "oklch(65% 0.09 82)" : "oklch(42% 0.006 285)",
+                        fontFamily: "var(--font-raleway)",
+                      }}
+                    >
+                      {lastName}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CommanderReveal — the card appears; the hero of the whole experience
 // ─────────────────────────────────────────────────────────────────────────────
 function CommanderReveal({
@@ -366,44 +491,76 @@ function CommanderReveal({
   onSpinAgain: () => void
   isSaved: boolean
 }) {
-  const image = getCardImage(commander)
   const oracleText = getCardOracleText(commander)
   const edhrecSlug = getEdhrecSlug(commander)
   const colorBadges = MANA_COLORS.filter((c) => commander.color_identity.includes(c.key))
+  const isDoubleFaced = !!commander.card_faces?.[1]?.image_uris
 
-  // Start with oracle-derived tags immediately; replace with EDHREC tags when they arrive
+  // ── EDHREC tags (oracle fallback → replaced by EDHREC when ready) ──
   const [tags, setTags] = useState<string[]>(() => getCommanderTags(commander))
-
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 6000)
-
-    fetch(`/api/tags?slug=${encodeURIComponent(edhrecSlug)}`, {
-      signal: controller.signal,
-    })
+    fetch(`/api/tags?slug=${encodeURIComponent(edhrecSlug)}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data: unknown) => {
         if (
           !cancelled &&
-          data !== null &&
-          typeof data === "object" &&
-          "tags" in data &&
-          Array.isArray((data as { tags: unknown }).tags) &&
-          ((data as { tags: string[] }).tags).length > 0
-        ) {
-          setTags((data as { tags: string[] }).tags)
-        }
+          data !== null && typeof data === "object" &&
+          "tags" in data && Array.isArray((data as { tags: unknown }).tags) &&
+          (data as { tags: string[] }).tags.length > 0
+        ) setTags((data as { tags: string[] }).tags)
       })
-      .catch(() => {}) // keep oracle tags on any failure
+      .catch(() => {})
       .finally(() => clearTimeout(timeout))
-
-    return () => {
-      cancelled = true
-      controller.abort()
-      clearTimeout(timeout)
-    }
+    return () => { cancelled = true; controller.abort(); clearTimeout(timeout) }
   }, [edhrecSlug])
+
+  // ── Art printings ──
+  const [printings, setPrintings] = useState<ScryfallPrinting[]>([])
+  const [selectedPrinting, setSelectedPrinting] = useState<ScryfallPrinting | null>(null)
+  useEffect(() => {
+    if (!commander.prints_search_uri) return
+    let cancelled = false
+    fetchCardPrintings(commander.prints_search_uri)
+      .then((data) => { if (!cancelled && data.length >= 2) setPrintings(data) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [commander.prints_search_uri])
+
+  // ── Card face flip ──
+  const [faceIndex, setFaceIndex] = useState(0)
+  const [isFlipping, setIsFlipping] = useState(false)
+  const [scope, animateFlip] = useAnimate()
+
+  const handleFlip = async () => {
+    if (isFlipping || !isDoubleFaced) return
+    setIsFlipping(true)
+    try {
+      await animateFlip(scope.current, { scaleX: 0 }, { duration: 0.18, ease: [0.4, 0, 1, 1] })
+      setFaceIndex((f) => 1 - f)
+      await animateFlip(scope.current, { scaleX: 1 }, { duration: 0.18, ease: [0, 0, 0.2, 1] })
+    } finally {
+      setIsFlipping(false)
+    }
+  }
+
+  const handleSelectPrinting = (p: ScryfallPrinting) => {
+    if (isFlipping) return
+    setSelectedPrinting(p)
+    setFaceIndex(0)
+  }
+
+  // ── Displayed image ──
+  const source = selectedPrinting ?? commander
+  const displayImage =
+    isDoubleFaced && faceIndex === 1
+      ? (source.card_faces?.[1]?.image_uris?.normal ??
+         commander.card_faces![1].image_uris!.normal)
+      : (source.image_uris?.normal ?? source.card_faces?.[0]?.image_uris?.normal ?? "")
+
+  const currentId = selectedPrinting?.id ?? commander.id
 
   return (
     <motion.div
@@ -412,43 +569,76 @@ function CommanderReveal({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
     >
-      {/* ── Card image — top on mobile, RIGHT on desktop ── */}
-      <div className="relative w-full lg:w-[54%] flex-shrink-0">
-        <div
-          className="reveal-flash absolute inset-0 rounded-2xl pointer-events-none z-10"
-          style={{
-            background: "radial-gradient(circle at 50% 40%, oklch(72% 0.115 82 / 0.55) 0%, transparent 65%)",
-          }}
-        />
-        <motion.div
-          className="w-full rounded-2xl overflow-hidden"
-          initial={{ boxShadow: "0 0 0px oklch(72% 0.115 82 / 0)" }}
-          animate={{
-            boxShadow: "0 0 100px oklch(72% 0.115 82 / 0.38), 0 0 200px oklch(47% 0.24 292 / 0.2)",
-          }}
-          transition={{ duration: 1.1, delay: 0.15, ease: "easeOut" }}
-        >
-          <Image
-            src={image}
-            alt={commander.name}
-            width={480}
-            height={672}
-            className="w-full h-auto"
-            priority
+      {/* ── Card column — top on mobile, RIGHT on desktop ── */}
+      <div className="w-full lg:w-[54%] flex-shrink-0">
+        {/* Card visual with flip scope */}
+        <div className="relative">
+          {/* Reveal flash */}
+          <div
+            className="reveal-flash absolute inset-0 rounded-2xl pointer-events-none z-10"
+            style={{ background: "radial-gradient(circle at 50% 40%, oklch(72% 0.115 82 / 0.55) 0%, transparent 65%)" }}
           />
-        </motion.div>
+
+          {/* scaleX target for flip animation */}
+          <div ref={scope} style={{ transformOrigin: "center center" }}>
+            <motion.div
+              className="w-full rounded-2xl overflow-hidden"
+              initial={{ boxShadow: "0 0 0px oklch(72% 0.115 82 / 0)" }}
+              animate={{ boxShadow: "0 0 100px oklch(72% 0.115 82 / 0.38), 0 0 200px oklch(47% 0.24 292 / 0.2)" }}
+              transition={{ duration: 1.1, delay: 0.15, ease: "easeOut" }}
+            >
+              <Image
+                src={displayImage}
+                alt={commander.name}
+                width={480}
+                height={672}
+                className="w-full h-auto"
+                priority
+              />
+            </motion.div>
+          </div>
+
+          {/* Flip button — only for double-faced cards */}
+          {isDoubleFaced && (
+            <button
+              onClick={handleFlip}
+              disabled={isFlipping}
+              aria-label={faceIndex === 0 ? "Show back face" : "Show front face"}
+              className="absolute bottom-2.5 right-2.5 z-20 flex items-center justify-center rounded-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 transition-opacity hover:opacity-80"
+              style={{
+                width: 36, height: 36,
+                background: "oklch(9% 0.009 285 / 0.85)",
+                border: "1px solid oklch(100% 0 0 / 0.15)",
+                backdropFilter: "blur(6px)",
+              }}
+            >
+              <svg
+                width="15" height="15" viewBox="0 0 24 24"
+                fill="none" stroke="oklch(72% 0.115 82)" strokeWidth="2.2"
+                strokeLinecap="round" strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="1 4 1 10 7 10"/>
+                <polyline points="23 20 23 14 17 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* Art accordion */}
+        <ArtAccordion
+          printings={printings}
+          currentId={currentId}
+          onSelect={handleSelectPrinting}
+        />
       </div>
 
       {/* ── Info column — bottom on mobile, LEFT on desktop ── */}
       <div className="w-full lg:w-[46%] flex flex-col gap-4">
-        {/* Commander name */}
         <motion.h2
           className="text-2xl lg:text-3xl font-black leading-snug"
-          style={{
-            fontFamily: "var(--font-cinzel)",
-            color: "oklch(72% 0.115 82)",
-            textShadow: "0 0 40px oklch(72% 0.115 82 / 0.3)",
-          }}
+          style={{ fontFamily: "var(--font-cinzel)", color: "oklch(72% 0.115 82)", textShadow: "0 0 40px oklch(72% 0.115 82 / 0.3)" }}
           initial={{ opacity: 0, x: -16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.28, duration: 0.5 }}
@@ -456,7 +646,6 @@ function CommanderReveal({
           {commander.name}
         </motion.h2>
 
-        {/* Color identity badges */}
         {colorBadges.length > 0 && (
           <motion.div
             className="flex gap-2"
@@ -468,21 +657,11 @@ function CommanderReveal({
               <div
                 key={c.key}
                 className="relative w-7 h-7 rounded-full border-2 flex items-center justify-center overflow-hidden"
-                style={{
-                  backgroundColor: c.hex,
-                  borderColor: c.hex,
-                  boxShadow: `0 0 12px ${c.glow}`,
-                }}
+                style={{ backgroundColor: c.hex, borderColor: c.hex, boxShadow: `0 0 12px ${c.glow}` }}
                 title={c.label}
               >
-                <div
-                  className="absolute inset-0 rounded-full"
-                  style={{ background: "radial-gradient(circle at 35% 28%, rgba(255,255,255,0.35) 0%, transparent 55%)" }}
-                />
-                <span
-                  className="relative z-10"
-                  style={{ fontFamily: "var(--font-cinzel)", color: c.textDark ? "#0a0a0f" : "#fff", fontSize: "0.65rem" }}
-                >
+                <div className="absolute inset-0 rounded-full" style={{ background: "radial-gradient(circle at 35% 28%, rgba(255,255,255,0.35) 0%, transparent 55%)" }} />
+                <span className="relative z-10" style={{ fontFamily: "var(--font-cinzel)", color: c.textDark ? "#0a0a0f" : "#fff", fontSize: "0.65rem" }}>
                   {c.key}
                 </span>
               </div>
@@ -490,7 +669,6 @@ function CommanderReveal({
           </motion.div>
         )}
 
-        {/* Playstyle tags — oracle-derived initially, replaced by EDHREC when ready */}
         {tags.length > 0 && (
           <motion.div
             key={tags.join(",")}
@@ -503,12 +681,7 @@ function CommanderReveal({
               <span
                 key={tag}
                 className="px-3 py-1 rounded-full text-xs font-semibold tracking-wide"
-                style={{
-                  background: "oklch(72% 0.115 82 / 0.09)",
-                  border: "1px solid oklch(72% 0.115 82 / 0.25)",
-                  color: "oklch(65% 0.09 82)",
-                  fontFamily: "var(--font-raleway)",
-                }}
+                style={{ background: "oklch(72% 0.115 82 / 0.09)", border: "1px solid oklch(72% 0.115 82 / 0.25)", color: "oklch(65% 0.09 82)", fontFamily: "var(--font-raleway)" }}
               >
                 {tag}
               </span>
@@ -516,16 +689,10 @@ function CommanderReveal({
           </motion.div>
         )}
 
-        {/* Oracle text */}
         {oracleText && (
           <motion.div
             className="rounded-xl p-4 text-sm leading-relaxed whitespace-pre-line"
-            style={{
-              background: "oklch(11% 0.009 285)",
-              border: "1px solid oklch(100% 0 0 / 0.07)",
-              color: "oklch(62% 0.01 285)",
-              fontFamily: "var(--font-raleway)",
-            }}
+            style={{ background: "oklch(11% 0.009 285)", border: "1px solid oklch(100% 0 0 / 0.07)", color: "oklch(62% 0.01 285)", fontFamily: "var(--font-raleway)" }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.52 }}
@@ -534,7 +701,6 @@ function CommanderReveal({
           </motion.div>
         )}
 
-        {/* Action buttons */}
         <motion.div
           className="flex gap-3"
           initial={{ opacity: 0, y: 8 }}
@@ -556,18 +722,12 @@ function CommanderReveal({
           <button
             onClick={onSpinAgain}
             className="flex-1 py-3 rounded-xl text-sm font-semibold cursor-pointer transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
-            style={{
-              background: "oklch(47% 0.24 292 / 0.1)",
-              border: "1px solid oklch(47% 0.24 292 / 0.32)",
-              color: "oklch(72% 0.18 295)",
-              fontFamily: "var(--font-raleway)",
-            }}
+            style={{ background: "oklch(47% 0.24 292 / 0.1)", border: "1px solid oklch(47% 0.24 292 / 0.32)", color: "oklch(72% 0.18 295)", fontFamily: "var(--font-raleway)" }}
           >
             Spin Again
           </button>
         </motion.div>
 
-        {/* External links */}
         <motion.div
           className="flex gap-5 text-xs"
           style={{ color: "oklch(42% 0.006 285)", fontFamily: "var(--font-raleway)" }}
@@ -575,20 +735,12 @@ function CommanderReveal({
           animate={{ opacity: 1 }}
           transition={{ delay: 0.7 }}
         >
-          <a
-            href={`https://edhrec.com/commanders/${edhrecSlug}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded"
-          >
+          <a href={`https://edhrec.com/commanders/${edhrecSlug}`} target="_blank" rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded">
             EDHREC ↗
           </a>
-          <a
-            href={commander.scryfall_uri}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded"
-          >
+          <a href={commander.scryfall_uri} target="_blank" rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded">
             Scryfall ↗
           </a>
         </motion.div>
@@ -721,8 +873,8 @@ export default function Page() {
               exit={{ opacity: 0, height: 0 }}
             >
               {selectedColors.size === 5
-                ? "Any color identity"
-                : `${selectedColors.size} color${selectedColors.size > 1 ? "s" : ""} selected`}
+                ? "5-color commanders only"
+                : `${Array.from(selectedColors).join("")} commanders only`}
             </motion.p>
           )}
         </AnimatePresence>
