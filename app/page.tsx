@@ -355,9 +355,9 @@ function getCommanderTags(card: ScryfallCard): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ArtAccordion — pick alternate printings; collapses when only 1 art exists
+// ArtStrip — always-visible row of art thumbnails; no text, purely visual
 // ─────────────────────────────────────────────────────────────────────────────
-function ArtAccordion({
+function ArtStrip({
   printings,
   currentId,
   onSelect,
@@ -366,114 +366,88 @@ function ArtAccordion({
   currentId: string
   onSelect: (p: ScryfallPrinting) => void
 }) {
-  const [open, setOpen] = useState(false)
   if (printings.length < 2) return null
 
   return (
-    <div className="mt-2">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 cursor-pointer focus-visible:outline-none"
-        aria-expanded={open}
+    <motion.div
+      className="flex items-center gap-2 mt-3"
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.3, duration: 0.35 }}
+    >
+      {/* Layers icon — indicates "multiple versions" */}
+      <svg
+        width="13" height="13" viewBox="0 0 24 24"
+        fill="none" stroke="oklch(50% 0.08 82 / 0.65)" strokeWidth="1.8"
+        strokeLinecap="round" strokeLinejoin="round"
+        className="flex-shrink-0"
+        aria-hidden="true"
       >
-        <motion.span
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="inline-block leading-none"
-          style={{ color: "oklch(50% 0.08 82)", fontSize: "0.65rem" }}
-        >
-          ▾
-        </motion.span>
-        <span
-          style={{
-            fontFamily: "var(--font-raleway)",
-            fontSize: "0.72rem",
-            color: "oklch(50% 0.08 82)",
-            letterSpacing: "0.04em",
-          }}
-        >
-          {printings.length} arts available
-        </span>
-      </button>
+        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+        <polyline points="2 17 12 22 22 17"/>
+        <polyline points="2 12 12 17 22 12"/>
+      </svg>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="art-list"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-            className="overflow-hidden"
-          >
-            <div
-              className="flex gap-2 pt-2 pb-1 overflow-x-auto"
-              style={{ scrollbarWidth: "none" }}
+      <div
+        className="flex gap-1.5 overflow-x-auto pb-0.5"
+        style={{ scrollbarWidth: "none" }}
+        role="group"
+        aria-label="Select alternate art"
+      >
+        {printings.map((p) => {
+          const img = getCardImage(p)
+          const isSelected = p.id === currentId
+          const isSLD = p.set === "sld"
+
+          return (
+            <motion.button
+              key={p.id}
+              onClick={() => onSelect(p)}
+              title={`${p.artist ?? "Unknown"}${isSLD ? " · Secret Lair" : ""}`}
+              aria-pressed={isSelected}
+              className="relative flex-shrink-0 rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/50"
+              style={{
+                width: 58,
+                border: `2px solid ${isSelected ? "oklch(72% 0.115 82)" : "oklch(100% 0 0 / 0.1)"}`,
+                boxShadow: isSelected ? "0 0 12px oklch(72% 0.115 82 / 0.4)" : "none",
+                transition: "border-color 0.15s, box-shadow 0.15s",
+              }}
+              whileHover={{ scale: 1.12, y: -3 }}
+              whileTap={{ scale: 0.94 }}
+              transition={{ type: "spring", stiffness: 400, damping: 22 }}
             >
-              {printings.map((p) => {
-                const img = getCardImage(p)
-                const isSelected = p.id === currentId
-                const isSLD = p.set === "sld"
-                const lastName = p.artist?.split(" ").pop() ?? ""
+              {img ? (
+                <Image
+                  src={img}
+                  alt={p.artist ?? "art"}
+                  width={58}
+                  height={81}
+                  className="w-full h-auto block"
+                />
+              ) : (
+                <div className="w-full card-aspect" style={{ background: "oklch(11% 0.009 285)" }} />
+              )}
 
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => onSelect(p)}
-                    title={`${p.artist ?? "Unknown"}${isSLD ? " · Secret Lair" : ""}`}
-                    className="relative flex-shrink-0 flex flex-col rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/40"
-                    style={{
-                      width: 70,
-                      border: `1.5px solid ${isSelected ? "oklch(72% 0.115 82)" : "oklch(100% 0 0 / 0.1)"}`,
-                      background: "oklch(11% 0.009 285)",
-                      boxShadow: isSelected ? "0 0 10px oklch(72% 0.115 82 / 0.28)" : "none",
-                      transition: "border-color 0.15s, box-shadow 0.15s",
-                    }}
-                  >
-                    {img ? (
-                      <Image
-                        src={img}
-                        alt={p.artist ?? "art"}
-                        width={70}
-                        height={98}
-                        className="w-full h-auto"
-                      />
-                    ) : (
-                      <div className="w-full card-aspect" />
-                    )}
-
-                    {isSLD && (
-                      <div
-                        className="absolute top-0.5 right-0.5 px-1 py-px rounded leading-none font-black"
-                        style={{
-                          fontSize: "0.5rem",
-                          background: "oklch(72% 0.115 82)",
-                          color: "oklch(10% 0.02 82)",
-                          fontFamily: "var(--font-cinzel)",
-                        }}
-                      >
-                        SL
-                      </div>
-                    )}
-
-                    <div
-                      className="px-1 py-0.5 w-full text-center truncate"
-                      style={{
-                        fontSize: "0.55rem",
-                        color: isSelected ? "oklch(65% 0.09 82)" : "oklch(42% 0.006 285)",
-                        fontFamily: "var(--font-raleway)",
-                      }}
-                    >
-                      {lastName}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+              {isSLD && (
+                <div
+                  className="absolute top-0.5 right-0.5 leading-none font-black rounded px-0.5"
+                  style={{
+                    fontSize: "0.42rem",
+                    background: "oklch(72% 0.115 82)",
+                    color: "oklch(10% 0.02 82)",
+                    fontFamily: "var(--font-cinzel)",
+                    paddingTop: "1px",
+                    paddingBottom: "1px",
+                  }}
+                >
+                  SL
+                </div>
+              )}
+            </motion.button>
+          )
+        })}
+      </div>
+    </motion.div>
   )
 }
 
@@ -561,6 +535,9 @@ function CommanderReveal({
       : (source.image_uris?.normal ?? source.card_faces?.[0]?.image_uris?.normal ?? "")
 
   const currentId = selectedPrinting?.id ?? commander.id
+  // Face images for the flip button (uses selected printing when available)
+  const face0img = source.card_faces?.[0]?.image_uris?.normal ?? commander.card_faces?.[0]?.image_uris?.normal ?? ""
+  const face1img = source.card_faces?.[1]?.image_uris?.normal ?? commander.card_faces?.[1]?.image_uris?.normal ?? ""
 
   return (
     <motion.div
@@ -571,15 +548,12 @@ function CommanderReveal({
     >
       {/* ── Card column — top on mobile, RIGHT on desktop ── */}
       <div className="w-full lg:w-[54%] flex-shrink-0">
-        {/* Card visual with flip scope */}
+        {/* Card image */}
         <div className="relative">
-          {/* Reveal flash */}
           <div
             className="reveal-flash absolute inset-0 rounded-2xl pointer-events-none z-10"
             style={{ background: "radial-gradient(circle at 50% 40%, oklch(72% 0.115 82 / 0.55) 0%, transparent 65%)" }}
           />
-
-          {/* scaleX target for flip animation */}
           <div ref={scope} style={{ transformOrigin: "center center" }}>
             <motion.div
               className="w-full rounded-2xl overflow-hidden"
@@ -597,37 +571,69 @@ function CommanderReveal({
               />
             </motion.div>
           </div>
+        </div>
 
-          {/* Flip button — only for double-faced cards */}
-          {isDoubleFaced && (
-            <button
+        {/* Flip button — outside the card; shows both face thumbnails */}
+        {isDoubleFaced && (
+          <div className="flex justify-center mt-3">
+            <motion.button
               onClick={handleFlip}
               disabled={isFlipping}
-              aria-label={faceIndex === 0 ? "Show back face" : "Show front face"}
-              className="absolute bottom-2.5 right-2.5 z-20 flex items-center justify-center rounded-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 transition-opacity hover:opacity-80"
+              aria-label={faceIndex === 0 ? "Flip to back face" : "Flip to front face"}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-full cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
               style={{
-                width: 36, height: 36,
-                background: "oklch(9% 0.009 285 / 0.85)",
-                border: "1px solid oklch(100% 0 0 / 0.15)",
-                backdropFilter: "blur(6px)",
+                background: "oklch(11% 0.009 285)",
+                border: "1px solid oklch(72% 0.115 82 / 0.3)",
               }}
+              whileHover={{ scale: 1.06, borderColor: "oklch(72% 0.115 82 / 0.6)" }}
+              whileTap={{ scale: 0.93 }}
+              transition={{ type: "spring", stiffness: 340, damping: 20 }}
             >
-              <svg
+              {/* Front face mini */}
+              <div
+                className="rounded overflow-hidden flex-shrink-0"
+                style={{
+                  width: 32, height: 45,
+                  border: `1.5px solid ${faceIndex === 0 ? "oklch(72% 0.115 82)" : "oklch(100% 0 0 / 0.15)"}`,
+                  opacity: faceIndex === 0 ? 1 : 0.38,
+                  transition: "opacity 0.2s, border-color 0.2s",
+                }}
+              >
+                <Image src={face0img} alt="Front face" width={32} height={45} className="w-full h-full object-cover" />
+              </div>
+
+              {/* Rotate icon */}
+              <motion.svg
                 width="15" height="15" viewBox="0 0 24 24"
-                fill="none" stroke="oklch(72% 0.115 82)" strokeWidth="2.2"
+                fill="none" stroke="oklch(65% 0.09 82)" strokeWidth="2"
                 strokeLinecap="round" strokeLinejoin="round"
+                animate={{ rotate: isFlipping ? 180 : 0 }}
+                transition={{ duration: 0.35 }}
                 aria-hidden="true"
               >
                 <polyline points="1 4 1 10 7 10"/>
                 <polyline points="23 20 23 14 17 14"/>
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-              </svg>
-            </button>
-          )}
-        </div>
+              </motion.svg>
 
-        {/* Art accordion */}
-        <ArtAccordion
+              {/* Back face mini */}
+              <div
+                className="rounded overflow-hidden flex-shrink-0"
+                style={{
+                  width: 32, height: 45,
+                  border: `1.5px solid ${faceIndex === 1 ? "oklch(72% 0.115 82)" : "oklch(100% 0 0 / 0.15)"}`,
+                  opacity: faceIndex === 1 ? 1 : 0.38,
+                  transition: "opacity 0.2s, border-color 0.2s",
+                }}
+              >
+                <Image src={face1img} alt="Back face" width={32} height={45} className="w-full h-full object-cover" />
+              </div>
+            </motion.button>
+          </div>
+        )}
+
+        {/* Art strip — visual thumbnails only, icon indicates "versions" */}
+        <ArtStrip
           printings={printings}
           currentId={currentId}
           onSelect={handleSelectPrinting}
