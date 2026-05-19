@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { Cinzel, Raleway } from "next/font/google"
 import "./globals.css"
+import CookieConsent from "@/components/CookieConsent"
 
 const cinzel = Cinzel({
   subsets: ["latin"],
@@ -68,7 +69,10 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Random EDH" />
         <link rel="apple-touch-icon" href="/icon" />
       </head>
-      <body className="min-h-dvh">{children}</body>
+      <body className="min-h-dvh">
+        {children}
+        <CookieConsent />
+      </body>
     </html>
   )
 }
