@@ -87,8 +87,9 @@ export async function fetchCommanderById(id: string): Promise<ScryfallCard> {
   return res.json() as Promise<ScryfallCard>
 }
 
-export async function fetchRandomPartner(excludeId?: string): Promise<ScryfallCard> {
-  const q = `is:commander+o:partner+-o:"partner with"+-o:"choose a background"`
+export async function fetchRandomPartner(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander o:partner -o:"partner with" -o:"choose a background" -o:"character select"`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
   const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
   const res = await fetch(url, { cache: "no-store" })
   if (!res.ok) throw new Error(`Scryfall ${res.status}`)
@@ -100,9 +101,81 @@ export async function fetchRandomPartner(excludeId?: string): Promise<ScryfallCa
   return card
 }
 
-export async function fetchRandomBackground(): Promise<ScryfallCard> {
+export async function fetchRandomDoctor(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander t:"time lord" t:doctor`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomCharacterSelectPartner(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander o:"partner—character select"`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomFriendsForeverPartner(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander o:"friends forever"`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomSurvivorPartner(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander o:"partner—survivors"`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomFatherSonPartner(excludeId?: string, colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = `is:commander o:"father & son"`
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomBackground(colorIdentity: string[] = []): Promise<ScryfallCard> {
+  let q = "t:background"
+  if (colorIdentity.length > 0) q += ` id<=${colorIdentity.join("")}`
   const res = await fetch(
-    `https://api.scryfall.com/cards/random?q=${encodeURIComponent("t:background")}`,
+    `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`,
     { cache: "no-store" }
   )
   if (!res.ok) throw new Error(`Scryfall ${res.status}`)
@@ -126,4 +199,41 @@ export async function fetchRandomCommander(
     throw new Error(`Scryfall ${res.status}: ${body}`)
   }
   return res.json() as Promise<ScryfallCard>
+}
+
+// Duo mode: commander with generic partner ability (not "partner with", not "choose a background").
+export async function fetchRandomDuoCommander(colorIdentity: string[]): Promise<ScryfallCard> {
+  let query = `is:commander o:partner -o:"partner with" -o:"choose a background" -o:"character select"`
+  if (colorIdentity.length > 0) query += ` id<=${colorIdentity.join("")}`
+  const res = await fetch(
+    `https://api.scryfall.com/cards/random?q=${encodeURIComponent(query)}`,
+    { cache: "no-store" }
+  )
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  return res.json() as Promise<ScryfallCard>
+}
+
+// Origin mode: commander that requires a Background enchantment.
+export async function fetchRandomOriginCommander(colorIdentity: string[]): Promise<ScryfallCard> {
+  let query = `is:commander o:"choose a background"`
+  if (colorIdentity.length > 0) query += ` id<=${colorIdentity.join("")}`
+  const res = await fetch(
+    `https://api.scryfall.com/cards/random?q=${encodeURIComponent(query)}`,
+    { cache: "no-store" }
+  )
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  return res.json() as Promise<ScryfallCard>
+}
+
+// Legend mode: fetches top commander IDs from our server-side proxy (uses live EDHREC data).
+// Cached in module memory for the browser session to avoid redundant calls.
+let _top100Cache: string[] | null = null
+export async function fetchTop100Ids(): Promise<string[]> {
+  if (_top100Cache) return _top100Cache
+  const res = await fetch("/api/top-commanders", { cache: "no-store" })
+  if (!res.ok) throw new Error("Could not load Legend commanders list")
+  const data = await res.json() as { ids: string[] }
+  if (!data.ids?.length) throw new Error("Empty Legend commanders list")
+  _top100Cache = data.ids
+  return _top100Cache
 }

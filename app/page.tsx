@@ -1,21 +1,31 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { motion, AnimatePresence, useAnimate } from "framer-motion"
 import Image from "next/image"
 import {
   type ScryfallCard,
   type ScryfallPrinting,
   fetchRandomCommander,
+  fetchRandomDuoCommander,
+  fetchRandomOriginCommander,
   fetchCommanderById,
   fetchRandomPartner,
+  fetchRandomFriendsForeverPartner,
+  fetchRandomDoctor,
+  fetchRandomCharacterSelectPartner,
+  fetchRandomSurvivorPartner,
+  fetchRandomFatherSonPartner,
   fetchRandomBackground,
   fetchCardPrintings,
   getCardImage,
   getCardOracleText,
   getEdhrecSlug,
 } from "@/lib/scryfall"
-import { getSaved, addSaved, removeSaved } from "@/lib/storage"
+import { type CommanderEntry, getSaved, addSaved, removeSaved } from "@/lib/storage"
+
+// URLs of card images that have already loaded this session — prevents skeleton flash on revisit
+const _loadedImageUrls = new Set<string>()
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type AppState = "idle" | "spinning" | "revealed"
@@ -139,7 +149,7 @@ function ManaOrb({
   active,
   onToggle,
 }: {
-  color: (typeof MANA_COLORS)[0]
+  color: { key: string; label: string; hex: string; glow: string; textDark: boolean }
   active: boolean
   onToggle: () => void
 }) {
@@ -186,6 +196,144 @@ function ManaOrb({
       </div>
       <span className="sr-only">{color.label}</span>
     </motion.button>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VerticalMiniSlot — vertical card-back carousel for partner / background reveal
+// ─────────────────────────────────────────────────────────────────────────────
+// Carousel tiles stay compact; result card expands to RESULT_W for readability
+const MINI_W = 90
+const MINI_H = Math.round(MINI_W * (7 / 5))
+const MINI_GAP = 8
+const MINI_STEP = MINI_H + MINI_GAP
+const MINI_STRIP = 16
+const MINI_WINNER = 12
+const RESULT_W = 160
+const RESULT_H = Math.round(RESULT_W * (7 / 5))
+
+function VerticalMiniSlot({
+  spinning,
+  result,
+  label,
+  fullWidth = false,
+}: {
+  spinning: boolean
+  result: ScryfallCard | null
+  label: string
+  fullWidth?: boolean
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <p
+        className="text-[0.58rem] tracking-[0.22em] uppercase"
+        style={{ color: "oklch(42% 0.006 285)", fontFamily: "var(--font-raleway)" }}
+      >
+        {label}
+      </p>
+
+      <AnimatePresence mode="wait">
+        {!result ? (
+          /* ── Spinning carousel ── */
+          <motion.div
+            key="carousel"
+            className="relative overflow-hidden rounded-xl"
+            style={{
+              width: MINI_W,
+              height: MINI_H + 16,
+              border: "1px solid oklch(100% 0 0 / 0.08)",
+              background: "oklch(8% 0.009 285)",
+            }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.2 }}
+          >
+            {(["top", "bottom"] as const).map((side) => (
+              <div
+                key={side}
+                className="absolute left-0 right-0 z-10 pointer-events-none"
+                style={{
+                  [side]: 0,
+                  height: 28,
+                  background: `linear-gradient(to ${side === "top" ? "bottom" : "top"}, oklch(8% 0.009 285) 0%, transparent 100%)`,
+                }}
+              />
+            ))}
+            <motion.div
+              className="absolute flex flex-col items-center"
+              style={{ top: 8, left: 0, right: 0, gap: MINI_GAP }}
+              initial={{ y: -(3 * MINI_STEP) }}
+              animate={spinning ? { y: -(MINI_WINNER * MINI_STEP) } : { y: -(3 * MINI_STEP) }}
+              transition={{ duration: 1.8, ease: [0.12, 0.88, 0.28, 1.0] }}
+            >
+              {Array.from({ length: MINI_STRIP }, (_, i) => (
+                <div key={i} className="flex-shrink-0 rounded-lg overflow-hidden" style={{ width: MINI_W, height: MINI_H }}>
+                  <Image
+                    src="https://cards.scryfall.io/back.png"
+                    alt="card back"
+                    width={MINI_W}
+                    height={MINI_H}
+                    className="w-full h-full object-cover"
+                    unoptimized
+                  />
+                </div>
+              ))}
+            </motion.div>
+          </motion.div>
+        ) : (
+          /* ── Result — expands to RESULT_W ── */
+          <motion.div
+            key="result"
+            className="flex flex-col items-center gap-2"
+            initial={{ opacity: 0, scale: 0.85, rotateY: -90 }}
+            animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+            transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+            style={{ perspective: 800 }}
+          >
+            <motion.div
+              className="rounded-2xl overflow-hidden"
+              animate={{
+                boxShadow: "0 0 40px oklch(72% 0.115 82 / 0.22), 0 0 80px oklch(72% 0.115 82 / 0.08)",
+              }}
+              transition={{ duration: 0.8, delay: 0.3 }}
+            >
+              <Image
+                src={getCardImage(result)}
+                alt={result.name}
+                width={fullWidth ? 480 : RESULT_W}
+                height={fullWidth ? 672 : RESULT_H}
+                className={fullWidth ? "w-full h-auto block" : "block"}
+              />
+            </motion.div>
+            <div className="text-center" style={fullWidth ? undefined : { maxWidth: RESULT_W }}>
+              <p
+                className="text-xs font-semibold leading-snug"
+                style={{ fontFamily: "var(--font-cinzel)", color: "oklch(72% 0.115 82)" }}
+              >
+                {result.name}
+              </p>
+              <div className="flex justify-center gap-3 mt-1">
+                <a
+                  href={`https://edhrec.com/commanders/${getEdhrecSlug(result)}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="text-[0.62rem] hover:opacity-80"
+                  style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}
+                >
+                  EDHREC ↗
+                </a>
+                <a
+                  href={result.scryfall_uri}
+                  target="_blank" rel="noopener noreferrer"
+                  className="text-[0.62rem] hover:opacity-80"
+                  style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}
+                >
+                  Scryfall ↗
+                </a>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   )
 }
 
@@ -463,13 +611,26 @@ function getCommanderTags(card: ScryfallCard): string[] {
 // ─────────────────────────────────────────────────────────────────────────────
 // getPartnerType — detect partner mechanic variant from oracle text
 // ─────────────────────────────────────────────────────────────────────────────
-type PartnerVariant = { type: "generic" } | { type: "with"; name: string } | { type: "background" }
+type PartnerVariant =
+  | { type: "generic" }
+  | { type: "with"; name: string }
+  | { type: "background" }
+  | { type: "friends-forever" }
+  | { type: "doctors-companion" }
+  | { type: "character-select" }
+  | { type: "survivors" }
+  | { type: "father-son" }
 
 function getPartnerType(card: ScryfallCard): PartnerVariant | null {
   const text = getCardOracleText(card).toLowerCase()
   const withMatch = text.match(/partner with ([^\n(]+)/)
   if (withMatch) return { type: "with", name: withMatch[1].trim().replace(/\.$/, "") }
   if (/choose a background/.test(text)) return { type: "background" }
+  if (/friends forever/.test(text)) return { type: "friends-forever" }
+  if (/doctor.s companion/.test(text)) return { type: "doctors-companion" }
+  if (/character select/.test(text)) return { type: "character-select" }
+  if (/partner.survivors/.test(text)) return { type: "survivors" }
+  if (/father & son/.test(text)) return { type: "father-son" }
   if (/\bpartner\b/.test(text)) return { type: "generic" }
   return null
 }
@@ -580,12 +741,18 @@ function CommanderReveal({
   onSpinAgain,
   isSaved,
   initialRarity,
+  colorIdentity,
+  partnerCard,
+  onPartnerChange,
 }: {
   commander: ScryfallCard
   onSave: () => void
   onSpinAgain: () => void
   isSaved: boolean
   initialRarity?: RarityTier | null
+  colorIdentity: string[]
+  partnerCard: ScryfallCard | null
+  onPartnerChange: (card: ScryfallCard | null) => void
 }) {
   const oracleText = getCardOracleText(commander)
   const edhrecSlug = getEdhrecSlug(commander)
@@ -661,25 +828,38 @@ function CommanderReveal({
   }
 
   // ── Extra UI state ──
-  const [imageLoaded, setImageLoaded] = useState(false)
-  const [partnerCard, setPartnerCard] = useState<ScryfallCard | null>(null)
+  const defaultImage = commander.image_uris?.normal ?? commander.card_faces?.[0]?.image_uris?.normal ?? ""
+  const [imageLoaded, setImageLoaded] = useState(() => _loadedImageUrls.has(defaultImage))
   const [rollingPartner, setRollingPartner] = useState(false)
   const [shareToast, setShareToast] = useState(false)
   const [showRarityInfo, setShowRarityInfo] = useState(false)
 
   const partnerType = getPartnerType(commander)
 
-  // Reset image skeleton and partner when commander changes
-  useEffect(() => { setImageLoaded(false); setPartnerCard(null) }, [commander.id])
+  // Reset derived UI state when commander changes; skip skeleton if image was already loaded
+  useEffect(() => {
+    const img = commander.image_uris?.normal ?? commander.card_faces?.[0]?.image_uris?.normal ?? ""
+    setImageLoaded(_loadedImageUrls.has(img))
+  }, [commander.id])
 
   const handleRollPartner = async () => {
     if (rollingPartner) return
     setRollingPartner(true)
     try {
       const partner = partnerType?.type === "background"
-        ? await fetchRandomBackground()
-        : await fetchRandomPartner(commander.id)
-      setPartnerCard(partner)
+        ? await fetchRandomBackground(colorIdentity)
+        : partnerType?.type === "friends-forever"
+        ? await fetchRandomFriendsForeverPartner(commander.id, colorIdentity)
+        : partnerType?.type === "doctors-companion"
+        ? await fetchRandomDoctor(commander.id, colorIdentity)
+        : partnerType?.type === "character-select"
+        ? await fetchRandomCharacterSelectPartner(commander.id, colorIdentity)
+        : partnerType?.type === "survivors"
+        ? await fetchRandomSurvivorPartner(commander.id, colorIdentity)
+        : partnerType?.type === "father-son"
+        ? await fetchRandomFatherSonPartner(commander.id, colorIdentity)
+        : await fetchRandomPartner(commander.id, colorIdentity)
+      onPartnerChange(partner)
     } catch { /* silent */ }
     finally { setRollingPartner(false) }
   }
@@ -711,6 +891,20 @@ function CommanderReveal({
   const face0img = source.card_faces?.[0]?.image_uris?.normal ?? commander.card_faces?.[0]?.image_uris?.normal ?? ""
   const face1img = source.card_faces?.[1]?.image_uris?.normal ?? commander.card_faces?.[1]?.image_uris?.normal ?? ""
 
+  const partnerLabel =
+    partnerType?.type === "background" ? "Background" :
+    partnerType?.type === "friends-forever" ? "Friend" :
+    partnerType?.type === "doctors-companion" ? "The Doctor" :
+    partnerType?.type === "survivors" ? "Survivor" :
+    partnerType?.type === "father-son" ? "Father / Son" :
+    "Partner"
+
+  const splitActive = (rollingPartner || !!partnerCard) &&
+    (partnerType?.type === "generic" || partnerType?.type === "background" ||
+     partnerType?.type === "friends-forever" || partnerType?.type === "doctors-companion" ||
+     partnerType?.type === "character-select" || partnerType?.type === "survivors" ||
+     partnerType?.type === "father-son")
+
   return (
     <motion.div
       className="flex flex-col lg:flex-row-reverse gap-6 lg:gap-10 w-full max-w-sm lg:max-w-5xl mx-auto px-4 lg:px-10 lg:items-center"
@@ -720,6 +914,7 @@ function CommanderReveal({
     >
       {/* ── Card column — top on mobile, RIGHT on desktop ── */}
       <div className="w-full lg:w-[54%] flex-shrink-0">
+
         {/* Card image */}
         <div className="relative">
           <div
@@ -754,7 +949,7 @@ function CommanderReveal({
                 height={672}
                 className="w-full h-auto"
                 priority
-                onLoad={() => setImageLoaded(true)}
+                onLoad={() => { _loadedImageUrls.add(displayImage); setImageLoaded(true) }}
               />
             </motion.div>
           </div>
@@ -825,6 +1020,37 @@ function CommanderReveal({
           currentId={currentId}
           onSelect={handleSelectPrinting}
         />
+
+        {/* Partner / Background — appears below the card at 80% width */}
+        <AnimatePresence>
+          {splitActive && (
+            <motion.div
+              className="mt-4 w-4/5 mx-auto flex flex-col items-center"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <VerticalMiniSlot
+                spinning={rollingPartner}
+                result={partnerCard}
+                label={partnerLabel}
+                fullWidth
+              />
+              {partnerCard && (
+                <motion.button
+                  onClick={handleRollPartner}
+                  disabled={rollingPartner}
+                  className="mt-2 text-[0.58rem] opacity-40 hover:opacity-80 cursor-pointer disabled:cursor-not-allowed transition-opacity"
+                  style={{ color: "oklch(55% 0.006 285)", fontFamily: "var(--font-raleway)" }}
+                  title="Reroll"
+                >
+                  ↺ reroll
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ── Info column — bottom on mobile, LEFT on desktop ── */}
@@ -991,25 +1217,7 @@ function CommanderReveal({
             animate={{ opacity: 1 }}
             transition={{ delay: 0.55 }}
           >
-            {(partnerType.type === "generic" || partnerType.type === "background") && (
-              <button
-                onClick={handleRollPartner}
-                disabled={rollingPartner}
-                className="w-full py-2.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-60 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
-                style={{
-                  background: "oklch(47% 0.24 292 / 0.07)",
-                  border: "1px solid oklch(47% 0.24 292 / 0.28)",
-                  color: "oklch(72% 0.18 295)",
-                  fontFamily: "var(--font-raleway)",
-                }}
-              >
-                {rollingPartner
-                  ? "Finding…"
-                  : partnerType.type === "background"
-                    ? "🎲 Roll a Background"
-                    : "🎲 Roll a Partner"}
-              </button>
-            )}
+            {/* "Partner with X" fixed link — always shown */}
             {partnerType.type === "with" && (
               <p style={{ fontSize: "0.72rem", color: "oklch(48% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
                 Partners with{" "}
@@ -1022,42 +1230,36 @@ function CommanderReveal({
                 </a>
               </p>
             )}
-            <AnimatePresence>
-              {partnerCard && (
-                <motion.div
-                  className="flex items-center gap-3 p-2.5 rounded-xl"
-                  style={{ background: "oklch(11% 0.009 285)", border: "1px solid oklch(100% 0 0 / 0.08)" }}
-                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.25 }}
-                >
-                  {getCardImage(partnerCard) && (
-                    <div className="flex-shrink-0 rounded-lg overflow-hidden" style={{ width: 46, border: "1px solid oklch(100% 0 0 / 0.12)" }}>
-                      <Image src={getCardImage(partnerCard)} alt={partnerCard.name} width={46} height={64} className="w-full h-auto block" />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-xs font-semibold" style={{ fontFamily: "var(--font-cinzel)", color: "oklch(72% 0.115 82)" }}>
-                      {partnerCard.name}
-                    </p>
-                    <div className="flex gap-3 mt-1">
-                      <a href={`https://edhrec.com/commanders/${getEdhrecSlug(partnerCard)}`} target="_blank" rel="noopener noreferrer"
-                        className="text-[0.62rem] hover:opacity-80" style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
-                        EDHREC ↗
-                      </a>
-                      <a href={partnerCard.scryfall_uri} target="_blank" rel="noopener noreferrer"
-                        className="text-[0.62rem] hover:opacity-80" style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
-                        Scryfall ↗
-                      </a>
-                    </div>
-                  </div>
-                  <button onClick={handleRollPartner} disabled={rollingPartner} title="Reroll"
-                    className="flex-shrink-0 opacity-40 hover:opacity-80 cursor-pointer disabled:cursor-not-allowed transition-opacity"
-                    style={{ color: "oklch(55% 0.006 285)", fontSize: "0.9rem" }}>
-                    ↺
+            {/* Generic partner / background / friends-forever: roll button then mini slot */}
+            {(partnerType.type === "generic" || partnerType.type === "background" || partnerType.type === "friends-forever" || partnerType.type === "doctors-companion" || partnerType.type === "character-select" || partnerType.type === "survivors" || partnerType.type === "father-son") && (
+              <>
+                {/* Roll button — always shown before rolling, on all screen sizes */}
+                {!rollingPartner && !partnerCard && (
+                  <button
+                    onClick={handleRollPartner}
+                    className="w-full py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
+                    style={{
+                      background: "oklch(47% 0.24 292 / 0.07)",
+                      border: "1px solid oklch(47% 0.24 292 / 0.28)",
+                      color: "oklch(72% 0.18 295)",
+                      fontFamily: "var(--font-raleway)",
+                    }}
+                  >
+                    {partnerType.type === "background"
+                      ? "🎲 Roll a Background"
+                      : partnerType.type === "friends-forever"
+                      ? "🎲 Roll a Friend Forever"
+                      : partnerType.type === "doctors-companion"
+                      ? "🎲 Roll a Doctor"
+                      : partnerType.type === "survivors"
+                      ? "🎲 Roll a Survivor"
+                      : partnerType.type === "father-son"
+                      ? "🎲 Roll Father / Son"
+                      : "🎲 Roll a Partner"}
                   </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                )}
+              </>
+            )}
           </motion.div>
         )}
 
@@ -1168,7 +1370,7 @@ function CommanderReveal({
 // ─────────────────────────────────────────────────────────────────────────────
 // HistoryStrip — recent rolls shown in idle state, click to re-reveal
 // ─────────────────────────────────────────────────────────────────────────────
-function HistoryStrip({ history, onLoad }: { history: ScryfallCard[]; onLoad: (c: ScryfallCard) => void }) {
+function HistoryStrip({ history, onLoad }: { history: CommanderEntry[]; onLoad: (e: CommanderEntry) => void }) {
   if (history.length === 0) return null
   return (
     <motion.div
@@ -1184,23 +1386,28 @@ function HistoryStrip({ history, onLoad }: { history: ScryfallCard[]; onLoad: (c
         Recent Rolls
       </p>
       <div className="flex gap-2.5 overflow-x-auto py-2 justify-center" style={{ scrollbarWidth: "none" }}>
-        {history.map((card) => {
-          const img = getCardImage(card)
+        {history.map((entry) => {
+          const img = getCardImage(entry.commander)
           return (
             <motion.button
-              key={card.id}
-              onClick={() => onLoad(card)}
-              title={card.name}
-              aria-label={`Re-view ${card.name}`}
-              className="flex-shrink-0 rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/40"
+              key={entry.commander.id}
+              onClick={() => onLoad(entry)}
+              title={entry.commander.name}
+              aria-label={`Re-view ${entry.commander.name}`}
+              className="relative flex-shrink-0 rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/40"
               style={{ width: 68, border: "1px solid oklch(100% 0 0 / 0.1)" }}
               whileHover={{ scale: 1.1, y: 4, transition: { type: "spring", stiffness: 380, damping: 22 } }}
               whileTap={{ scale: 0.92 }}
             >
               {img ? (
-                <Image src={img} alt={card.name} width={68} height={95} className="w-full h-auto block" />
+                <Image src={img} alt={entry.commander.name} width={68} height={95} className="w-full h-auto block" />
               ) : (
                 <div style={{ width: 68, height: 95, background: "oklch(11% 0.009 285)" }} />
+              )}
+              {entry.partner && (
+                <div className="absolute bottom-0.5 right-0.5 rounded overflow-hidden" style={{ width: 22, height: 31, border: "1px solid oklch(100% 0 0 / 0.3)" }}>
+                  <Image src={getCardImage(entry.partner)} alt={entry.partner.name} width={22} height={31} className="w-full h-auto block" />
+                </div>
               )}
             </motion.button>
           )
@@ -1222,8 +1429,8 @@ function Sidebar({
 }: {
   open: boolean
   onClose: () => void
-  saved: ScryfallCard[]
-  onLoad: (card: ScryfallCard) => void
+  saved: CommanderEntry[]
+  onLoad: (entry: CommanderEntry) => void
   onRemove: (id: string) => void
 }) {
   // Escape key to close
@@ -1321,12 +1528,12 @@ function Sidebar({
                 </div>
               ) : (
                 <AnimatePresence initial={false}>
-                  {saved.map((card) => {
-                    const img = getCardImage(card)
-                    const colors = MANA_COLORS.filter((c) => card.color_identity.includes(c.key))
+                  {saved.map((entry) => {
+                    const img = getCardImage(entry.commander)
+                    const colors = MANA_COLORS.filter((c) => entry.commander.color_identity.includes(c.key))
                     return (
                       <motion.div
-                        key={card.id}
+                        key={entry.commander.id}
                         layout
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
@@ -1334,24 +1541,29 @@ function Sidebar({
                         transition={{ duration: 0.2 }}
                         className="flex items-center gap-3 px-4 py-3 cursor-pointer group"
                         style={{ borderBottom: "1px solid oklch(100% 0 0 / 0.04)" }}
-                        onClick={() => onLoad(card)}
+                        onClick={() => onLoad(entry)}
                         whileHover={{ backgroundColor: "oklch(72% 0.115 82 / 0.04)" }}
                       >
                         {/* Card thumbnail */}
                         {img && (
                           <div className="flex-shrink-0 rounded-lg overflow-hidden" style={{ width: 46, height: 64, border: "1px solid oklch(100% 0 0 / 0.12)" }}>
-                            <Image src={img} alt={card.name} width={46} height={64} className="w-full h-auto" />
+                            <Image src={img} alt={entry.commander.name} width={46} height={64} className="w-full h-auto" />
                           </div>
                         )}
 
-                        {/* Name + color badges */}
+                        {/* Name + partner + color badges */}
                         <div className="flex-1 min-w-0">
                           <p
                             className="leading-tight truncate"
                             style={{ fontFamily: "var(--font-cinzel)", fontSize: "0.7rem", fontWeight: 600, color: "oklch(72% 0.115 82)" }}
                           >
-                            {card.name}
+                            {entry.commander.name}
                           </p>
+                          {entry.partner && (
+                            <p className="truncate mt-0.5" style={{ fontFamily: "var(--font-raleway)", fontSize: "0.58rem", color: "oklch(42% 0.006 285)" }}>
+                              + {entry.partner.name}
+                            </p>
+                          )}
                           {colors.length > 0 && (
                             <div className="flex gap-1 mt-1.5">
                               {colors.map((c) => (
@@ -1373,8 +1585,8 @@ function Sidebar({
 
                         {/* Remove */}
                         <button
-                          onClick={(e) => { e.stopPropagation(); onRemove(card.id) }}
-                          aria-label={`Remove ${card.name}`}
+                          onClick={(e) => { e.stopPropagation(); onRemove(entry.commander.id) }}
+                          aria-label={`Remove ${entry.commander.name}`}
                           className="flex-shrink-0 flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none transition-colors hover:text-red-400/70 focus-visible:text-red-400/70"
                           style={{ width: 44, height: 44, color: "oklch(38% 0.006 285)" }}
                         >
@@ -1401,12 +1613,16 @@ function Sidebar({
 export default function Page() {
   const [appState, setAppState] = useState<AppState>("idle")
   const [selectedColors, setSelectedColors] = useState<Set<ColorKey>>(new Set())
+  const [colorlessActive, setColorlessActive] = useState(false)
+  // Dev-only: force partner or background commanders for testing the split panel
+  const [spinMode, setSpinMode] = useState<"duo" | "origin" | null>(null)
   const [commander, setCommander] = useState<ScryfallCard | null>(null)
+  const [partnerCard, setPartnerCard] = useState<ScryfallCard | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
-  const [saved, setSaved] = useState<ScryfallCard[]>([])
+  const [saved, setSaved] = useState<CommanderEntry[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingRarity, setPendingRarity] = useState<RarityTier | null>(null)
-  const [history, setHistory] = useState<ScryfallCard[]>([])
+  const [history, setHistory] = useState<CommanderEntry[]>([])
 
   useEffect(() => { setSaved(getSaved()) }, [])
 
@@ -1423,24 +1639,40 @@ export default function Page() {
       .catch(() => {})
   }, [])
 
-  // Keep a rolling history of the last 8 revealed commanders
+  // Keep a rolling history of the last 8 revealed commanders (including partner)
   useEffect(() => {
     if (!commander || appState !== "revealed") return
     setHistory((prev) => {
-      if (prev[0]?.id === commander.id) return prev
-      return [commander, ...prev].slice(0, 8)
+      if (prev[0]?.commander.id === commander.id) {
+        if (prev[0].partner?.id === partnerCard?.id) return prev
+        return [{ ...prev[0], partner: partnerCard }, ...prev.slice(1)]
+      }
+      return [{ commander, partner: partnerCard }, ...prev].slice(0, 8)
     })
-  }, [commander, appState])
+  }, [commander, appState, partnerCard])
 
-  const isSaved = commander ? saved.some((c) => c.id === commander.id) : false
+  const isSaved = commander ? saved.some((e) => e.commander.id === commander.id) : false
 
   const toggleColor = useCallback((key: ColorKey) => {
+    setColorlessActive(false)
     setSelectedColors((prev) => {
       const next = new Set(prev)
       next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }, [])
+
+  const toggleColorless = useCallback(() => {
+    setColorlessActive((prev) => {
+      if (!prev) setSelectedColors(new Set())
+      return !prev
+    })
+  }, [])
+
+  // Colorless is incompatible with Partner / Background modes
+  useEffect(() => {
+    if (colorlessActive && spinMode !== null) setSpinMode(null)
+  }, [colorlessActive, spinMode])
 
   const handleSpin = useCallback(async () => {
     if (appState !== "idle") return
@@ -1450,12 +1682,24 @@ export default function Page() {
     setPendingRarity(null)
     setAppState("spinning")
 
-    const colors = Array.from(selectedColors)
+    const colors = colorlessActive ? ["c"] : Array.from(selectedColors)
     let card: ScryfallCard
     try {
-      card = await fetchRandomCommander(colors)
-    } catch {
-      setFetchError("Could not reach Scryfall. Check your connection and try again.")
+      if (spinMode === "duo") {
+        card = await fetchRandomDuoCommander(colors)
+      } else if (spinMode === "origin") {
+        card = await fetchRandomOriginCommander(colors)
+      } else {
+        card = await fetchRandomCommander(colors)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ""
+      const noResults = msg.includes("404")
+      setFetchError(
+        noResults
+          ? "No commanders found for this color combination. Try fewer colors or none."
+          : "Could not reach Scryfall. Check your connection and try again."
+      )
       setAppState("idle")
       return
     }
@@ -1480,34 +1724,37 @@ export default function Page() {
 
     setCommander(card)
     setAppState("revealed")
-  }, [appState, selectedColors])
+  }, [appState, selectedColors, spinMode])
 
   const handleSpinAgain = useCallback(() => {
     setAppState("idle")
     setCommander(null)
+    setPartnerCard(null)
     setFetchError(null)
     setPendingRarity(null)
   }, [])
 
   const handleSave = useCallback(() => {
     if (!commander) return
-    setSaved(addSaved(commander))
-  }, [commander])
+    setSaved(addSaved({ commander, partner: partnerCard }))
+  }, [commander, partnerCard])
 
   const handleRemoveSaved = useCallback((id: string) => {
     setSaved(removeSaved(id))
   }, [])
 
-  const handleLoadCommander = useCallback((card: ScryfallCard) => {
-    setCommander(card)
+  const handleLoadCommander = useCallback((entry: CommanderEntry) => {
+    setCommander(entry.commander)
+    setPartnerCard(entry.partner)
     setFetchError(null)
     setAppState("revealed")
     setSidebarOpen(false)
     setPendingRarity(null)
   }, [])
 
-  const handleLoadFromHistory = useCallback((card: ScryfallCard) => {
-    setCommander(card)
+  const handleLoadFromHistory = useCallback((entry: CommanderEntry) => {
+    setCommander(entry.commander)
+    setPartnerCard(entry.partner)
     setFetchError(null)
     setAppState("revealed")
     setPendingRarity(null)
@@ -1593,10 +1840,18 @@ export default function Page() {
               onToggle={() => toggleColor(c.key)}
             />
           ))}
+          {/* Divider */}
+          <div className="self-stretch w-px mx-1" style={{ background: "oklch(100% 0 0 / 0.1)" }} />
+          {/* Colorless orb */}
+          <ManaOrb
+            color={{ key: "C", label: "Colorless", hex: "#8e8ea8", glow: "rgba(142,142,168,0.6)", textDark: false }}
+            active={colorlessActive}
+            onToggle={toggleColorless}
+          />
         </motion.div>
 
         <AnimatePresence>
-          {selectedColors.size > 0 && (
+          {(selectedColors.size > 0 || colorlessActive) && (
             <motion.p
               className="mt-2 text-xs tracking-wide"
               style={{ color: "oklch(45% 0.006 285)", fontFamily: "var(--font-raleway)" }}
@@ -1604,10 +1859,13 @@ export default function Page() {
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
             >
-              {`${getColorComboName(Array.from(selectedColors))} commanders only`}
+              {colorlessActive
+                ? "Colorless commanders only"
+                : `${getColorComboName(Array.from(selectedColors))} commanders only`}
             </motion.p>
           )}
         </AnimatePresence>
+
       </header>
 
       {/* ── Center — state machine ── */}
@@ -1639,6 +1897,40 @@ export default function Page() {
                 </p>
               )}
               <HistoryStrip history={history} onLoad={handleLoadFromHistory} />
+
+              {/* ── Mode selector ── */}
+              <div
+                className="flex rounded-full p-0.5 gap-0.5"
+                style={{ background: "oklch(11% 0.009 285)", border: "1px solid oklch(100% 0 0 / 0.07)" }}
+              >
+                {([
+                  { value: null,     icon: "✦", label: "Normal" },
+                  { value: "duo",    icon: "⚔", label: "Partner" },
+                  { value: "origin", icon: "📖", label: "Background" },
+                ] as const).map(({ value, icon, label }) => {
+                  const active = spinMode === value
+                  const disabled = colorlessActive && value !== null
+                  return (
+                    <button
+                      key={String(value)}
+                      onClick={() => !disabled && setSpinMode(value)}
+                      disabled={disabled}
+                      className="px-3 py-1.5 rounded-full text-xs tracking-wide transition-all duration-200"
+                      style={{
+                        fontFamily: "var(--font-cinzel)",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                        background: active ? "oklch(72% 0.115 82 / 0.15)" : "transparent",
+                        color: disabled ? "oklch(25% 0.006 285)" : active ? "var(--gold)" : "oklch(38% 0.006 285)",
+                        boxShadow: active ? "0 0 12px oklch(72% 0.115 82 / 0.2)" : "none",
+                        border: active ? "1px solid oklch(72% 0.115 82 / 0.35)" : "1px solid transparent",
+                        opacity: disabled ? 0.4 : 1,
+                      }}
+                    >
+                      {icon} {label}
+                    </button>
+                  )
+                })}
+              </div>
             </motion.div>
           )}
 
@@ -1675,6 +1967,9 @@ export default function Page() {
                 onSpinAgain={handleSpinAgain}
                 isSaved={isSaved}
                 initialRarity={pendingRarity}
+                colorIdentity={colorlessActive ? ["c"] : Array.from(selectedColors)}
+                partnerCard={partnerCard}
+                onPartnerChange={setPartnerCard}
               />
             </motion.div>
           )}
