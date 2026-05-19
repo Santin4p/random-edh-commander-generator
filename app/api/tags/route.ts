@@ -1,11 +1,31 @@
 import { NextRequest, NextResponse } from "next/server"
 
-// Fetches EDHREC taglinks for a given commander slug.
-// Returns { tags: string[] } always — never throws to the client.
-// Cached server-side for 1 hour to avoid hammering EDHREC on repeat spins.
+function extractRank(data: unknown): number | null {
+  if (data === null || typeof data !== "object") return null
+  try {
+    const d = data as Record<string, unknown>
+    if (typeof d.rank === "number") return d.rank
+    // Try panels.cardview.json_dict.card.rank
+    const panels = d.panels as Record<string, unknown> | undefined
+    const cardview = panels?.cardview as Record<string, unknown> | undefined
+    const jd1 = cardview?.json_dict as Record<string, unknown> | undefined
+    const card1 = jd1?.card as Record<string, unknown> | undefined
+    if (typeof card1?.rank === "number") return card1.rank as number
+    // Try container.json_dict.card.rank
+    const container = d.container as Record<string, unknown> | undefined
+    const jd2 = container?.json_dict as Record<string, unknown> | undefined
+    const card2 = jd2?.card as Record<string, unknown> | undefined
+    if (typeof card2?.rank === "number") return card2.rank as number
+  } catch { /* ignore */ }
+  return null
+}
+
+// Fetches EDHREC tags + rank for a given commander slug.
+// Returns { tags: string[], rank: number | null } always — never throws.
+// Cached server-side for 1 hour.
 export async function GET(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get("slug")?.trim()
-  if (!slug) return NextResponse.json({ tags: [] })
+  if (!slug) return NextResponse.json({ tags: [], rank: null })
 
   try {
     const res = await fetch(
@@ -17,11 +37,10 @@ export async function GET(req: NextRequest) {
       }
     )
 
-    if (!res.ok) return NextResponse.json({ tags: [] })
+    if (!res.ok) return NextResponse.json({ tags: [], rank: null })
 
     const data: unknown = await res.json()
 
-    // Defensive extraction — any structural change just yields []
     const taglinks =
       data !== null &&
       typeof data === "object" &&
@@ -32,25 +51,26 @@ export async function GET(req: NextRequest) {
         ? data.panels.taglinks
         : null
 
-    if (!Array.isArray(taglinks)) return NextResponse.json({ tags: [] })
+    const tags = Array.isArray(taglinks)
+      ? taglinks
+          .slice(0, 6)
+          .flatMap((item: unknown) => {
+            if (
+              item !== null &&
+              typeof item === "object" &&
+              "value" in item &&
+              typeof (item as Record<string, unknown>).value === "string"
+            ) {
+              return [(item as Record<string, string>).value]
+            }
+            return []
+          })
+      : []
 
-    const tags = taglinks
-      .slice(0, 6) // top 6 by deck count (already sorted desc)
-      .flatMap((item: unknown) => {
-        if (
-          item !== null &&
-          typeof item === "object" &&
-          "value" in item &&
-          typeof (item as Record<string, unknown>).value === "string"
-        ) {
-          return [(item as Record<string, string>).value]
-        }
-        return []
-      })
+    const rank = extractRank(data)
 
-    return NextResponse.json({ tags })
+    return NextResponse.json({ tags, rank })
   } catch {
-    // Network error, timeout, JSON parse failure, anything — graceful empty
-    return NextResponse.json({ tags: [] })
+    return NextResponse.json({ tags: [], rank: null })
   }
 }

@@ -12,6 +12,7 @@ import {
   getCardOracleText,
   getEdhrecSlug,
 } from "@/lib/scryfall"
+import { getSaved, addSaved, removeSaved } from "@/lib/storage"
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type AppState = "idle" | "spinning" | "revealed"
@@ -40,14 +41,79 @@ const STRIP_COUNT = 60
 const WINNER_IDX = 45
 const SPIN_DURATION_MS = 2800
 
+// ── Rarity tiers (by EDHREC rank) ─────────────────────────────────────────
+type RarityTier = "diamond" | "legendary" | "epic" | "rare" | "common"
+
+const RARITY: Record<RarityTier, { label: string; color: string; rgb: string }> = {
+  diamond:   { label: "Diamond",   color: "oklch(85% 0.10 200)", rgb: "130,210,242" },
+  legendary: { label: "Legendary", color: "oklch(72% 0.115 82)",  rgb: "212,175,55"  },
+  epic:      { label: "Epic",      color: "oklch(72% 0.18 295)",  rgb: "155,89,220"  },
+  rare:      { label: "Rare",      color: "oklch(65% 0.15 240)",  rgb: "80,140,220"  },
+  common:    { label: "Common",    color: "oklch(52% 0.01 285)",  rgb: "130,130,140" },
+}
+
+function getRarityTier(rank: number | null): RarityTier {
+  if (rank === null) return "common"
+  if (rank <= 10)  return "diamond"
+  if (rank <= 50)  return "legendary"
+  if (rank <= 100) return "epic"
+  if (rank <= 500) return "rare"
+  return "common"
+}
+
+// ── Color identity theme ───────────────────────────────────────────────────
+const COLOR_HUES:    Record<ColorKey, number> = { W: 82,  U: 240, B: 292, R: 28,  G: 145 }
+const COLOR_CHROMAS: Record<ColorKey, number> = { W: 0.06, U: 0.20, B: 0.14, R: 0.22, G: 0.18 }
+const WUBRG_ORDER = ["W", "U", "B", "R", "G"] as const
+
+const COLOR_COMBO_NAMES: Record<string, string> = {
+  W: "Mono White", U: "Mono Blue", B: "Mono Black", R: "Mono Red", G: "Mono Green",
+  WU: "Azorius",  WB: "Orzhov",  WR: "Boros",  WG: "Selesnya",
+  UB: "Dimir",   UR: "Izzet",   UG: "Simic",
+  BR: "Rakdos",  BG: "Golgari", RG: "Gruul",
+  WUB: "Esper",  WUR: "Jeskai", WUG: "Bant",
+  WBR: "Mardu",  WBG: "Abzan",  WRG: "Naya",
+  UBR: "Grixis", UBG: "Sultai", URG: "Temur", BRG: "Jund",
+  WUBR: "Non-Green", WUBG: "Non-Red", WURG: "Non-Black", WBRG: "Non-Blue", UBRG: "Non-White",
+  WUBRG: "Five Color",
+}
+
+function normalizeColorKey(colors: string[]): string {
+  return WUBRG_ORDER.filter((c) => colors.includes(c)).join("")
+}
+
+function getColorComboName(colors: string[]): string {
+  return COLOR_COMBO_NAMES[normalizeColorKey(colors)] ?? normalizeColorKey(colors)
+}
+
+function getColorTheme(keys: ColorKey[]): { blobs: [string, string, string]; overlay: string } {
+  if (keys.length === 0 || keys.length === 5) {
+    return {
+      blobs: ["oklch(47% 0.24 292)", "oklch(72% 0.115 82)", "oklch(42% 0.18 242)"],
+      overlay: "none",
+    }
+  }
+  const n = keys.length
+  const sinM = keys.reduce((s, k) => s + Math.sin((COLOR_HUES[k] * Math.PI) / 180), 0) / n
+  const cosM = keys.reduce((s, k) => s + Math.cos((COLOR_HUES[k] * Math.PI) / 180), 0) / n
+  const hue = ((Math.atan2(sinM, cosM) * 180) / Math.PI + 360) % 360
+  const chr = keys.reduce((s, k) => s + COLOR_CHROMAS[k], 0) / n
+  const h0 = hue.toFixed(1), h1 = ((hue + 28) % 360).toFixed(1), h2 = ((hue - 18 + 360) % 360).toFixed(1)
+  const c0 = chr.toFixed(3), c1 = (chr * 0.82).toFixed(3), c2 = (chr * 0.65).toFixed(3)
+  return {
+    blobs: [`oklch(42% ${c0} ${h0})`, `oklch(36% ${c1} ${h1})`, `oklch(50% ${c2} ${h2})`],
+    overlay: `radial-gradient(ellipse at 50% 0%, oklch(44% ${(chr * 0.7).toFixed(3)} ${h0} / 0.11) 0%, transparent 65%)`,
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AmbientBlob — slow floating glow behind everything
 // ─────────────────────────────────────────────────────────────────────────────
-function AmbientBlob({ style, delay }: { style: React.CSSProperties; delay: number }) {
+function AmbientBlob({ color, style, delay }: { color: string; style: React.CSSProperties; delay: number }) {
   return (
     <motion.div
-      className="absolute rounded-full pointer-events-none"
-      style={{ filter: "blur(100px)", opacity: 0.13, ...style }}
+      className="ambient-blob absolute rounded-full pointer-events-none"
+      style={{ opacity: 0.13, background: color, transition: "background 1.4s ease", ...style }}
       animate={{ x: [0, 28, -18, 0], y: [0, -22, 15, 0], scale: [1, 1.08, 0.92, 1] }}
       transition={{ duration: 16, delay, repeat: Infinity, ease: "easeInOut" }}
     />
@@ -100,7 +166,7 @@ function ManaOrb({
           className="relative z-10 text-xs font-semibold"
           style={{
             fontFamily: "var(--font-cinzel)",
-            color: active ? (color.textDark ? "#0a0a0f" : "#fff") : color.hex,
+            color: active ? (color.textDark ? "oklch(8% 0.009 285)" : "oklch(97% 0.005 285)") : color.hex,
             letterSpacing: "0.05em",
           }}
         >
@@ -276,8 +342,9 @@ function SpinButton({ onClick, disabled }: { onClick: () => void; disabled: bool
 // ─────────────────────────────────────────────────────────────────────────────
 // SlotMachine — the roulette drum
 // ─────────────────────────────────────────────────────────────────────────────
-function SlotMachine() {
+function SlotMachine({ rarity }: { rarity?: RarityTier | null }) {
   const cardHeight = Math.round(CARD_W * (7 / 5))
+  const rgb = rarity ? RARITY[rarity].rgb : "212,175,55"
 
   return (
     <div className="relative w-full overflow-hidden" style={{ height: cardHeight + 24 }}>
@@ -293,14 +360,37 @@ function SlotMachine() {
         />
       ))}
 
+      {/* Approaching glow — grows as spin decelerates, locks to rarity color */}
+      <motion.div
+        className="absolute inset-y-0 left-1/2 -translate-x-1/2 z-0 pointer-events-none"
+        style={{ width: CARD_W + 200 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 2.1, ease: [0.08, 0, 0.6, 1], delay: 0.35 }}
+      >
+        <div
+          className="w-full h-full"
+          style={{
+            background: `radial-gradient(ellipse at center, rgba(${rgb}, 0.22) 0%, transparent 68%)`,
+            transition: "background 1s ease",
+          }}
+        />
+      </motion.div>
+
       {/* Center highlight window */}
-      <div
+      <motion.div
         className="absolute inset-y-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none rounded-xl"
         style={{
           width: CARD_W + 12,
-          border: "1.5px solid oklch(72% 0.115 82 / 0.45)",
-          boxShadow: "0 0 32px oklch(72% 0.115 82 / 0.12), inset 0 0 16px oklch(72% 0.115 82 / 0.04)",
+          borderWidth: "1.5px",
+          borderStyle: "solid",
+          borderColor: `rgba(${rgb}, 0.55)`,
+          transition: "border-color 1s ease",
         }}
+        animate={{
+          boxShadow: `0 0 44px rgba(${rgb}, 0.28), 0 0 88px rgba(${rgb}, 0.1), inset 0 0 22px rgba(${rgb}, 0.05)`,
+        }}
+        transition={{ duration: 1.0, ease: "easeOut" }}
       />
 
       {/* Card strip */}
@@ -419,7 +509,7 @@ function ArtStrip({
               {img ? (
                 <Image
                   src={img}
-                  alt={p.artist ?? "art"}
+                  alt={p.artist ? `Art by ${p.artist}` : "Alternate card art"}
                   width={58}
                   height={81}
                   className="w-full h-auto block"
@@ -459,18 +549,24 @@ function CommanderReveal({
   onSave,
   onSpinAgain,
   isSaved,
+  initialRarity,
 }: {
   commander: ScryfallCard
   onSave: () => void
   onSpinAgain: () => void
   isSaved: boolean
+  initialRarity?: RarityTier | null
 }) {
   const oracleText = getCardOracleText(commander)
   const edhrecSlug = getEdhrecSlug(commander)
   const colorBadges = MANA_COLORS.filter((c) => commander.color_identity.includes(c.key))
   const isDoubleFaced = !!commander.card_faces?.[1]?.image_uris
 
-  // ── EDHREC tags (oracle fallback → replaced by EDHREC when ready) ──
+  // ── Rarity (seeded from pre-spin fetch, confirmed by tags fetch) ──
+  const [rarity, setRarity] = useState<RarityTier | null>(initialRarity ?? null)
+  const [edhrecRank, setEdhrecRank] = useState<number | null>(null)
+
+  // ── EDHREC tags + rank ──
   const [tags, setTags] = useState<string[]>(() => getCommanderTags(commander))
   useEffect(() => {
     let cancelled = false
@@ -479,12 +575,20 @@ function CommanderReveal({
     fetch(`/api/tags?slug=${encodeURIComponent(edhrecSlug)}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data: unknown) => {
+        if (cancelled) return
         if (
-          !cancelled &&
           data !== null && typeof data === "object" &&
           "tags" in data && Array.isArray((data as { tags: unknown }).tags) &&
           (data as { tags: string[] }).tags.length > 0
         ) setTags((data as { tags: string[] }).tags)
+        if (
+          data !== null && typeof data === "object" &&
+          "rank" in data && typeof (data as { rank: unknown }).rank === "number"
+        ) {
+          const r = (data as { rank: number }).rank
+          setEdhrecRank(r)
+          setRarity(getRarityTier(r))
+        }
       })
       .catch(() => {})
       .finally(() => clearTimeout(timeout))
@@ -552,13 +656,21 @@ function CommanderReveal({
         <div className="relative">
           <div
             className="reveal-flash absolute inset-0 rounded-2xl pointer-events-none z-10"
-            style={{ background: "radial-gradient(circle at 50% 40%, oklch(72% 0.115 82 / 0.55) 0%, transparent 65%)" }}
+            style={{
+              background: rarity
+                ? `radial-gradient(circle at 50% 40%, rgba(${RARITY[rarity].rgb}, 0.55) 0%, transparent 65%)`
+                : "radial-gradient(circle at 50% 40%, rgba(212,175,55,0.55) 0%, transparent 65%)",
+            }}
           />
           <div ref={scope} style={{ transformOrigin: "center center" }}>
             <motion.div
               className="w-full rounded-2xl overflow-hidden"
-              initial={{ boxShadow: "0 0 0px oklch(72% 0.115 82 / 0)" }}
-              animate={{ boxShadow: "0 0 100px oklch(72% 0.115 82 / 0.38), 0 0 200px oklch(47% 0.24 292 / 0.2)" }}
+              initial={{ boxShadow: "0 0 0px rgba(212,175,55,0)" }}
+              animate={{
+                boxShadow: rarity
+                  ? `0 0 100px rgba(${RARITY[rarity].rgb}, 0.38), 0 0 200px rgba(${RARITY[rarity].rgb}, 0.12)`
+                  : "0 0 100px rgba(212,175,55,0.38), 0 0 200px rgba(100,80,200,0.2)",
+              }}
               transition={{ duration: 1.1, delay: 0.15, ease: "easeOut" }}
             >
               <Image
@@ -652,6 +764,38 @@ function CommanderReveal({
           {commander.name}
         </motion.h2>
 
+        {/* Rarity badge */}
+        <AnimatePresence>
+          {rarity && (
+            <motion.div
+              key={rarity}
+              className="flex items-center gap-2.5"
+              initial={{ opacity: 0, y: 6, scale: 0.88 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ delay: 0.18, type: "spring", stiffness: 260, damping: 18 }}
+            >
+              <span
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold tracking-[0.16em] uppercase"
+                style={{
+                  background: `rgba(${RARITY[rarity].rgb}, 0.1)`,
+                  border: `1px solid rgba(${RARITY[rarity].rgb}, 0.38)`,
+                  color: RARITY[rarity].color,
+                  fontFamily: "var(--font-cinzel)",
+                  boxShadow: `0 0 18px rgba(${RARITY[rarity].rgb}, 0.22)`,
+                }}
+              >
+                ◆ {RARITY[rarity].label}
+              </span>
+              {edhrecRank !== null && (
+                <span style={{ fontFamily: "var(--font-raleway)", fontSize: "0.65rem", color: "oklch(42% 0.006 285)" }}>
+                  #{edhrecRank} on EDHREC
+                </span>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {colorBadges.length > 0 && (
           <motion.div
             className="flex gap-2"
@@ -667,7 +811,7 @@ function CommanderReveal({
                 title={c.label}
               >
                 <div className="absolute inset-0 rounded-full" style={{ background: "radial-gradient(circle at 35% 28%, rgba(255,255,255,0.35) 0%, transparent 55%)" }} />
-                <span className="relative z-10" style={{ fontFamily: "var(--font-cinzel)", color: c.textDark ? "#0a0a0f" : "#fff", fontSize: "0.65rem" }}>
+                <span className="relative z-10" style={{ fontFamily: "var(--font-cinzel)", color: c.textDark ? "oklch(8% 0.009 285)" : "oklch(97% 0.005 285)", fontSize: "0.65rem" }}>
                   {c.key}
                 </span>
               </div>
@@ -756,6 +900,191 @@ function CommanderReveal({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sidebar — Command Zone: saved commanders, slides in from right
+// ─────────────────────────────────────────────────────────────────────────────
+function Sidebar({
+  open,
+  onClose,
+  saved,
+  onLoad,
+  onRemove,
+}: {
+  open: boolean
+  onClose: () => void
+  saved: ScryfallCard[]
+  onLoad: (card: ScryfallCard) => void
+  onRemove: (id: string) => void
+}) {
+  // Escape key to close
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, [open, onClose])
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            key="backdrop"
+            className="fixed inset-0 z-40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22 }}
+            onClick={onClose}
+            style={{ background: "oklch(7.5% 0.009 285 / 0.72)" }}
+          />
+
+          {/* Panel */}
+          <motion.aside
+            key="panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command Zone — saved commanders"
+            className="fixed right-0 top-0 bottom-0 z-50 flex flex-col"
+            style={{
+              width: "min(320px, 88vw)",
+              background: "oklch(10% 0.009 285)",
+              borderLeft: "1px solid oklch(72% 0.115 82 / 0.1)",
+              boxShadow: "-24px 0 80px oklch(7.5% 0.009 285 / 0.6)",
+            }}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.8 }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+              style={{ borderBottom: "1px solid oklch(100% 0 0 / 0.06)" }}
+            >
+              <div className="flex items-center gap-2.5">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(72% 0.115 82)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                </svg>
+                <span
+                  className="text-xs font-semibold tracking-[0.2em] uppercase"
+                  style={{ fontFamily: "var(--font-cinzel)", color: "oklch(72% 0.115 82)" }}
+                >
+                  Command Zone
+                </span>
+                {saved.length > 0 && (
+                  <span
+                    className="px-1.5 py-px rounded-full text-[0.55rem] font-bold leading-none"
+                    style={{ background: "oklch(72% 0.115 82 / 0.15)", color: "oklch(65% 0.09 82)", fontFamily: "var(--font-cinzel)" }}
+                  >
+                    {saved.length}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={onClose}
+                aria-label="Close Command Zone"
+                autoFocus
+                className="flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20 transition-opacity hover:opacity-60"
+                style={{ width: 44, height: 44, color: "oklch(48% 0.006 285)" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "oklch(22% 0.006 285) transparent" }}>
+              {saved.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-5 px-8 text-center" style={{ minHeight: 260 }}>
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="oklch(28% 0.006 285)" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                  </svg>
+                  <p style={{ fontFamily: "var(--font-raleway)", fontSize: "0.78rem", color: "oklch(38% 0.006 285)", lineHeight: 1.65 }}>
+                    Your Command Zone is empty.<br />
+                    Spin to find your first commander.
+                  </p>
+                </div>
+              ) : (
+                <AnimatePresence initial={false}>
+                  {saved.map((card) => {
+                    const img = getCardImage(card)
+                    const colors = MANA_COLORS.filter((c) => card.color_identity.includes(c.key))
+                    return (
+                      <motion.div
+                        key={card.id}
+                        layout
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20, transition: { duration: 0.15 } }}
+                        transition={{ duration: 0.2 }}
+                        className="flex items-center gap-3 px-4 py-3 cursor-pointer group"
+                        style={{ borderBottom: "1px solid oklch(100% 0 0 / 0.04)" }}
+                        onClick={() => onLoad(card)}
+                        whileHover={{ backgroundColor: "oklch(72% 0.115 82 / 0.04)" }}
+                      >
+                        {/* Card thumbnail */}
+                        {img && (
+                          <div className="flex-shrink-0 rounded-lg overflow-hidden" style={{ width: 46, height: 64, border: "1px solid oklch(100% 0 0 / 0.12)" }}>
+                            <Image src={img} alt={card.name} width={46} height={64} className="w-full h-auto" />
+                          </div>
+                        )}
+
+                        {/* Name + color badges */}
+                        <div className="flex-1 min-w-0">
+                          <p
+                            className="leading-tight truncate"
+                            style={{ fontFamily: "var(--font-cinzel)", fontSize: "0.7rem", fontWeight: 600, color: "oklch(72% 0.115 82)" }}
+                          >
+                            {card.name}
+                          </p>
+                          {colors.length > 0 && (
+                            <div className="flex gap-1 mt-1.5">
+                              {colors.map((c) => (
+                                <div
+                                  key={c.key}
+                                  className="relative w-4 h-4 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0"
+                                  style={{ backgroundColor: c.hex, border: `1px solid ${c.hex}` }}
+                                  title={c.label}
+                                >
+                                  <div className="absolute inset-0 rounded-full" style={{ background: "radial-gradient(circle at 35% 28%, rgba(255,255,255,0.3) 0%, transparent 55%)" }} />
+                                  <span style={{ fontFamily: "var(--font-cinzel)", color: c.textDark ? "oklch(8% 0.009 285)" : "oklch(97% 0.005 285)", fontSize: "0.38rem", position: "relative", zIndex: 1 }}>
+                                    {c.key}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Remove */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onRemove(card.id) }}
+                          aria-label={`Remove ${card.name}`}
+                          className="flex-shrink-0 flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none transition-colors hover:text-red-400/70 focus-visible:text-red-400/70"
+                          style={{ width: 44, height: 44, color: "oklch(38% 0.006 285)" }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </motion.div>
+                    )
+                  })}
+                </AnimatePresence>
+              )}
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Page — state machine: idle → spinning → revealed
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Page() {
@@ -763,7 +1092,13 @@ export default function Page() {
   const [selectedColors, setSelectedColors] = useState<Set<ColorKey>>(new Set())
   const [commander, setCommander] = useState<ScryfallCard | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
-  const [isSaved, setIsSaved] = useState(false)
+  const [saved, setSaved] = useState<ScryfallCard[]>([])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [pendingRarity, setPendingRarity] = useState<RarityTier | null>(null)
+
+  useEffect(() => { setSaved(getSaved()) }, [])
+
+  const isSaved = commander ? saved.some((c) => c.id === commander.id) : false
 
   const toggleColor = useCallback((key: ColorKey) => {
     setSelectedColors((prev) => {
@@ -775,44 +1110,84 @@ export default function Page() {
 
   const handleSpin = useCallback(async () => {
     if (appState !== "idle") return
-    setIsSaved(false)
+    const spinStart = Date.now()
     setFetchError(null)
     setCommander(null)
+    setPendingRarity(null)
     setAppState("spinning")
 
     const colors = Array.from(selectedColors)
-    const [card] = await Promise.allSettled([
-      fetchRandomCommander(colors),
-      new Promise((r) => setTimeout(r, SPIN_DURATION_MS)),
-    ])
-
-    if (card.status === "fulfilled") {
-      setCommander(card.value)
-      setAppState("revealed")
-    } else {
+    let card: ScryfallCard
+    try {
+      card = await fetchRandomCommander(colors)
+    } catch {
       setFetchError("Could not reach Scryfall. Check your connection and try again.")
       setAppState("idle")
+      return
     }
+
+    // Card known — fire rank fetch immediately so glow can update mid-spin
+    const slug = getEdhrecSlug(card)
+    fetch(`/api/tags?slug=${encodeURIComponent(slug)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: unknown) => {
+        if (
+          data !== null && typeof data === "object" &&
+          "rank" in data && typeof (data as { rank: unknown }).rank === "number"
+        ) {
+          setPendingRarity(getRarityTier((data as { rank: number }).rank))
+        }
+      })
+      .catch(() => {})
+
+    // Wait for remaining spin time
+    const elapsed = Date.now() - spinStart
+    await new Promise((r) => setTimeout(r, Math.max(600, SPIN_DURATION_MS - elapsed)))
+
+    setCommander(card)
+    setAppState("revealed")
   }, [appState, selectedColors])
 
   const handleSpinAgain = useCallback(() => {
     setAppState("idle")
     setCommander(null)
-    setIsSaved(false)
     setFetchError(null)
+    setPendingRarity(null)
   }, [])
 
   const handleSave = useCallback(() => {
-    setIsSaved(true)
+    if (!commander) return
+    setSaved(addSaved(commander))
+  }, [commander])
+
+  const handleRemoveSaved = useCallback((id: string) => {
+    setSaved(removeSaved(id))
   }, [])
+
+  const handleLoadCommander = useCallback((card: ScryfallCard) => {
+    setCommander(card)
+    setFetchError(null)
+    setAppState("revealed")
+    setSidebarOpen(false)
+    setPendingRarity(null)
+  }, [])
+
+  const colorKeys = Array.from(selectedColors) as ColorKey[]
+  const theme = getColorTheme(colorKeys)
 
   return (
     <main className="relative min-h-dvh flex flex-col overflow-hidden">
-      {/* ── Background blobs ── */}
+      {/* ── Background blobs + color theme overlay ── */}
       <div className="fixed inset-0 -z-10" aria-hidden="true">
-        <AmbientBlob style={{ left: "6%",  top: "10%",    width: 480, height: 480, background: "oklch(47% 0.24 292)" }} delay={0} />
-        <AmbientBlob style={{ right: "4%", top: "26%",    width: 360, height: 360, background: "oklch(72% 0.115 82)" }} delay={5} />
-        <AmbientBlob style={{ left: "20%", bottom: "6%",  width: 400, height: 400, background: "oklch(42% 0.18 242)" }} delay={9} />
+        {theme.overlay !== "none" && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: theme.overlay, transition: "background 1.4s ease" }}
+          />
+        )}
+        <AmbientBlob color={theme.blobs[0]} style={{ left: "6%",  top: "10%",   width: 480, height: 480 }} delay={0} />
+        <AmbientBlob color={theme.blobs[1]} style={{ right: "4%", top: "26%",   width: 360, height: 360 }} delay={5} />
+        <AmbientBlob color={theme.blobs[2]} style={{ left: "20%", bottom: "6%", width: 400, height: 400 }} delay={9} />
       </div>
 
       {/* ── Header ── */}
@@ -843,11 +1218,11 @@ export default function Page() {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
         >
-          <div className="h-px w-12 bg-gradient-to-r from-transparent to-amber-700/40" />
+          <div className="h-px w-12" style={{ background: "linear-gradient(to right, transparent, oklch(50% 0.08 82 / 0.4))" }} />
           <span style={{ color: "oklch(38% 0.006 285)", fontSize: "0.6rem", letterSpacing: "0.3em", fontFamily: "var(--font-raleway)" }}>
             SPIN · DISCOVER · BUILD
           </span>
-          <div className="h-px w-12 bg-gradient-to-l from-transparent to-amber-700/40" />
+          <div className="h-px w-12" style={{ background: "linear-gradient(to left, transparent, oklch(50% 0.08 82 / 0.4))" }} />
         </motion.div>
 
         {/* WUBRG filter */}
@@ -878,9 +1253,7 @@ export default function Page() {
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
             >
-              {selectedColors.size === 5
-                ? "5-color commanders only"
-                : `${Array.from(selectedColors).join("")} commanders only`}
+              {`${getColorComboName(Array.from(selectedColors))} commanders only`}
             </motion.p>
           )}
         </AnimatePresence>
@@ -932,7 +1305,7 @@ export default function Page() {
               >
                 Summoning
               </p>
-              <SlotMachine />
+              <SlotMachine rarity={pendingRarity} />
             </motion.div>
           )}
 
@@ -949,6 +1322,7 @@ export default function Page() {
                 onSave={handleSave}
                 onSpinAgain={handleSpinAgain}
                 isSaved={isSaved}
+                initialRarity={pendingRarity}
               />
             </motion.div>
           )}
@@ -970,6 +1344,53 @@ export default function Page() {
           Scryfall
         </a>
       </footer>
+
+      {/* ── Book button — fixed top-right ── */}
+      <motion.button
+        onClick={() => setSidebarOpen(true)}
+        aria-label={`Open Command Zone (${saved.length} saved)`}
+        className="fixed z-30 flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/30"
+        style={{
+          top: "max(1rem, env(safe-area-inset-top))",
+          right: "max(1rem, env(safe-area-inset-right))",
+          width: 44,
+          height: 44,
+          background: "oklch(11% 0.009 285)",
+          border: "1px solid oklch(72% 0.115 82 / 0.22)",
+        }}
+        whileHover={{ scale: 1.1, borderColor: "oklch(72% 0.115 82 / 0.5)" }}
+        whileTap={{ scale: 0.9 }}
+        transition={{ type: "spring", stiffness: 360, damping: 20 }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="oklch(72% 0.115 82)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+        </svg>
+        {saved.length > 0 && (
+          <span
+            className="absolute -top-1 -right-1 flex items-center justify-center rounded-full font-bold leading-none"
+            style={{
+              width: 17,
+              height: 17,
+              fontSize: "0.5rem",
+              background: "oklch(72% 0.115 82)",
+              color: "oklch(10% 0.02 82)",
+              fontFamily: "var(--font-cinzel)",
+            }}
+          >
+            {saved.length}
+          </span>
+        )}
+      </motion.button>
+
+      {/* ── Sidebar ── */}
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        saved={saved}
+        onLoad={handleLoadCommander}
+        onRemove={handleRemoveSaved}
+      />
     </main>
   )
 }

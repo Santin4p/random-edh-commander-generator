@@ -80,6 +80,16 @@ body {
   50%       { opacity: 1; }
 }
 
+/* Ambient blobs — reduce blur radius on mobile to ease GPU pressure */
+.ambient-blob {
+  filter: blur(100px);
+}
+@media (max-width: 640px) {
+  .ambient-blob {
+    filter: blur(60px);
+  }
+}
+
 .glow-spin-btn {
   animation: pulse-glow 2.8s ease-in-out infinite;
 }
