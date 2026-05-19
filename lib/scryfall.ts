@@ -12,6 +12,11 @@ export type ScryfallCard = {
   }>
   scryfall_uri: string
   artist?: string
+  purchase_uris?: {
+    tcgplayer?: string
+    cardmarket?: string
+    cardhoarder?: string
+  }
 }
 
 export type ScryfallPrinting = {
@@ -74,6 +79,34 @@ export async function fetchCardPrintings(
   } catch {
     return []
   }
+}
+
+export async function fetchCommanderById(id: string): Promise<ScryfallCard> {
+  const res = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(id)}`, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  return res.json() as Promise<ScryfallCard>
+}
+
+export async function fetchRandomPartner(excludeId?: string): Promise<ScryfallCard> {
+  const q = `is:commander+o:partner+-o:"partner with"+-o:"choose a background"`
+  const url = `https://api.scryfall.com/cards/random?q=${encodeURIComponent(q)}`
+  const res = await fetch(url, { cache: "no-store" })
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  const card = await res.json() as ScryfallCard
+  if (excludeId && card.id === excludeId) {
+    const res2 = await fetch(url, { cache: "no-store" })
+    if (res2.ok) return res2.json() as Promise<ScryfallCard>
+  }
+  return card
+}
+
+export async function fetchRandomBackground(): Promise<ScryfallCard> {
+  const res = await fetch(
+    `https://api.scryfall.com/cards/random?q=${encodeURIComponent("t:background")}`,
+    { cache: "no-store" }
+  )
+  if (!res.ok) throw new Error(`Scryfall ${res.status}`)
+  return res.json() as Promise<ScryfallCard>
 }
 
 // id= means EXACT color identity (e.g. id=WU → only true Azorius commanders).

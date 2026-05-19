@@ -7,6 +7,9 @@ import {
   type ScryfallCard,
   type ScryfallPrinting,
   fetchRandomCommander,
+  fetchCommanderById,
+  fetchRandomPartner,
+  fetchRandomBackground,
   fetchCardPrintings,
   getCardImage,
   getCardOracleText,
@@ -50,6 +53,14 @@ const RARITY: Record<RarityTier, { label: string; color: string; rgb: string }> 
   epic:      { label: "Epic",      color: "oklch(72% 0.18 295)",  rgb: "155,89,220"  },
   rare:      { label: "Rare",      color: "oklch(65% 0.15 240)",  rgb: "80,140,220"  },
   common:    { label: "Common",    color: "oklch(52% 0.01 285)",  rgb: "130,130,140" },
+}
+
+const RARITY_RANKS: Record<RarityTier, string> = {
+  diamond:   "EDHREC Top 10",
+  legendary: "Top 11–50",
+  epic:      "Top 51–100",
+  rare:      "Top 101–500",
+  common:    "Rank 500+",
 }
 
 function getRarityTier(rank: number | null): RarityTier {
@@ -179,69 +190,18 @@ function ManaOrb({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CardBackTile — approximates the classic MTG card back in SVG
+// CardBackTile — official MTG card back image
 // ─────────────────────────────────────────────────────────────────────────────
 function CardBackTile() {
   return (
-    <div
-      className="card-aspect flex-shrink-0 rounded-xl overflow-hidden"
-      style={{
-        width: CARD_W,
-        background: "#0e0804",
-        border: "2px solid #3a2208",
-        padding: 5,
-      }}
-    >
-      {/* Inner frame */}
-      <div
-        className="w-full h-full rounded-lg overflow-hidden relative"
-        style={{ border: "1px solid #5c3a14" }}
-      >
-        <svg
-          viewBox="0 0 100 140"
-          className="w-full h-full"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          {/* Background */}
-          <rect width="100" height="140" fill="#130b05" />
-
-          {/* Outer rule */}
-          <rect x="3" y="3" width="94" height="134" rx="2" fill="none" stroke="#4a2e0e" strokeWidth="0.5" />
-
-          {/* Corner ornaments */}
-          <path d="M3,3 h8 M3,3 v8"       stroke="#7a4e1e" strokeWidth="1" fill="none"/>
-          <path d="M97,3 h-8 M97,3 v8"    stroke="#7a4e1e" strokeWidth="1" fill="none"/>
-          <path d="M3,137 h8 M3,137 v-8"  stroke="#7a4e1e" strokeWidth="1" fill="none"/>
-          <path d="M97,137 h-8 M97,137 v-8" stroke="#7a4e1e" strokeWidth="1" fill="none"/>
-
-          {/* Center oval */}
-          <ellipse cx="50" cy="70" rx="34" ry="46" fill="#0a0703" stroke="#6a3e14" strokeWidth="0.75" />
-          <ellipse cx="50" cy="70" rx="26" ry="37" fill="none" stroke="#4a2e0e" strokeWidth="0.5" />
-
-          {/* Diamond / Deckmaster motif */}
-          <polygon
-            points="50,38 70,70 50,102 30,70"
-            fill="#0d0905"
-            stroke="#7a5020"
-            strokeWidth="0.6"
-          />
-          <polygon
-            points="50,48 62,70 50,92 38,70"
-            fill="none"
-            stroke="#5a3810"
-            strokeWidth="0.4"
-          />
-
-          {/* Cardinal tick marks */}
-          <line x1="50" y1="24" x2="50" y2="34" stroke="#5a3810" strokeWidth="0.5"/>
-          <line x1="50" y1="106" x2="50" y2="116" stroke="#5a3810" strokeWidth="0.5"/>
-          <line x1="16" y1="70" x2="26" y2="70" stroke="#5a3810" strokeWidth="0.5"/>
-          <line x1="74" y1="70" x2="84" y2="70" stroke="#5a3810" strokeWidth="0.5"/>
-
-          {/* Subtle purple arcane overlay */}
-          <ellipse cx="50" cy="60" rx="20" ry="16" fill="oklch(47% 0.24 292 / 0.06)" />
-        </svg>
-      </div>
+    <div className="flex-shrink-0 rounded-xl overflow-hidden" style={{ width: CARD_W }}>
+      <Image
+        src="https://cards.scryfall.io/back.png"
+        alt="MTG card back"
+        width={CARD_W}
+        height={Math.round(CARD_W * (7 / 5))}
+        className="w-full h-auto block"
+      />
     </div>
   )
 }
@@ -340,11 +300,79 @@ function SpinButton({ onClick, disabled }: { onClick: () => void; disabled: bool
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SlotMachine — the roulette drum
+// SpinGlow — full-screen omnidirectional rarity glow; lives in the bg layer
+// so it escapes every overflow-hidden and spreads in all directions
+// ─────────────────────────────────────────────────────────────────────────────
+function SpinGlow({ rgb }: { rgb: string }) {
+  return (
+    <motion.div
+      className="absolute inset-0 pointer-events-none overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.38 }}
+    >
+      {/* Outer sphere — wide soft halo, rises from the start */}
+      <motion.div
+        className="absolute"
+        style={{ left: "50%", top: "52%", transform: "translate(-50%, -50%)", width: "180vw", height: "180vh" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: [0, 0.5, 0.85, 1] }}
+        transition={{ duration: 2.3, ease: [0.08, 0, 0.5, 1], times: [0, 0.22, 0.62, 1] }}
+      >
+        <div
+          className="w-full h-full rounded-full"
+          style={{
+            background: `radial-gradient(ellipse at center, rgba(${rgb}, 0.22) 0%, rgba(${rgb}, 0.10) 28%, rgba(${rgb}, 0.04) 52%, transparent 70%)`,
+            transition: "background 1.1s ease",
+          }}
+        />
+      </motion.div>
+
+      {/* Mid sphere — concentrated, erupts in the final stretch */}
+      <motion.div
+        className="absolute"
+        style={{ left: "50%", top: "52%", transform: "translate(-50%, -50%)", width: "110vw", height: "110vh" }}
+        initial={{ opacity: 0, scale: 0.35 }}
+        animate={{ opacity: [0, 0, 0.28, 0.88, 1], scale: [0.35, 0.5, 0.78, 1, 1] }}
+        transition={{ duration: 2.55, ease: [0.08, 0, 0.28, 1], times: [0, 0.15, 0.46, 0.82, 1] }}
+      >
+        <div
+          className="w-full h-full rounded-full"
+          style={{
+            background: `radial-gradient(ellipse at center, rgba(${rgb}, 0.70) 0%, rgba(${rgb}, 0.32) 18%, rgba(${rgb}, 0.11) 40%, transparent 58%)`,
+            transition: "background 0.9s ease",
+          }}
+        />
+      </motion.div>
+
+      {/* Flash burst — sharp peak the instant the cards lock */}
+      <motion.div
+        className="absolute"
+        style={{ left: "50%", top: "52%", transform: "translate(-50%, -50%)", width: "70vw", height: "70vh" }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: [0, 0, 0, 1, 0.32] }}
+        transition={{ duration: 2.8, ease: "easeOut", times: [0, 0.57, 0.75, 0.88, 1] }}
+      >
+        <div
+          className="w-full h-full rounded-full"
+          style={{
+            background: `radial-gradient(ellipse at center, rgba(${rgb}, 1.0) 0%, rgba(${rgb}, 0.48) 14%, transparent 42%)`,
+            transition: "background 0.4s ease",
+          }}
+        />
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SlotMachine — the roulette drum (glow is handled by SpinGlow in bg layer)
 // ─────────────────────────────────────────────────────────────────────────────
 function SlotMachine({ rarity }: { rarity?: RarityTier | null }) {
   const cardHeight = Math.round(CARD_W * (7 / 5))
-  const rgb = rarity ? RARITY[rarity].rgb : "212,175,55"
+  // Neutral when rarity unknown; shifts to rarity color via CSS transition in SpinGlow
+  const rgb = rarity ? RARITY[rarity].rgb : "210,215,235"
 
   return (
     <div className="relative w-full overflow-hidden" style={{ height: cardHeight + 24 }}>
@@ -352,7 +380,7 @@ function SlotMachine({ rarity }: { rarity?: RarityTier | null }) {
       {(["left", "right"] as const).map((side) => (
         <div
           key={side}
-          className="absolute inset-y-0 z-10 w-32 pointer-events-none"
+          className="absolute inset-y-0 z-10 w-40 pointer-events-none"
           style={{
             [side]: 0,
             background: `linear-gradient(to ${side === "left" ? "right" : "left"}, oklch(7.5% 0.009 285) 0%, transparent 100%)`,
@@ -360,37 +388,25 @@ function SlotMachine({ rarity }: { rarity?: RarityTier | null }) {
         />
       ))}
 
-      {/* Approaching glow — grows as spin decelerates, locks to rarity color */}
-      <motion.div
-        className="absolute inset-y-0 left-1/2 -translate-x-1/2 z-0 pointer-events-none"
-        style={{ width: CARD_W + 200 }}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 2.1, ease: [0.08, 0, 0.6, 1], delay: 0.35 }}
-      >
-        <div
-          className="w-full h-full"
-          style={{
-            background: `radial-gradient(ellipse at center, rgba(${rgb}, 0.22) 0%, transparent 68%)`,
-            transition: "background 1s ease",
-          }}
-        />
-      </motion.div>
-
-      {/* Center highlight window */}
+      {/* Center highlight window — frame glow synced to the spin timeline */}
       <motion.div
         className="absolute inset-y-3 left-1/2 -translate-x-1/2 z-10 pointer-events-none rounded-xl"
         style={{
           width: CARD_W + 12,
           borderWidth: "1.5px",
           borderStyle: "solid",
-          borderColor: `rgba(${rgb}, 0.55)`,
-          transition: "border-color 1s ease",
+          borderColor: `rgba(${rgb}, 0.75)`,
+          transition: "border-color 0.9s ease",
         }}
         animate={{
-          boxShadow: `0 0 44px rgba(${rgb}, 0.28), 0 0 88px rgba(${rgb}, 0.1), inset 0 0 22px rgba(${rgb}, 0.05)`,
+          boxShadow: [
+            `0 0 4px rgba(${rgb}, 0.04)`,
+            `0 0 50px rgba(${rgb}, 0.45), 0 0 100px rgba(${rgb}, 0.20), inset 0 0 28px rgba(${rgb}, 0.09)`,
+            `0 0 130px rgba(${rgb}, 1.0), 0 0 260px rgba(${rgb}, 0.50), 0 0 400px rgba(${rgb}, 0.24), inset 0 0 110px rgba(${rgb}, 0.30)`,
+            `0 0 85px rgba(${rgb}, 0.68), 0 0 170px rgba(${rgb}, 0.34), 0 0 280px rgba(${rgb}, 0.15), inset 0 0 70px rgba(${rgb}, 0.18)`,
+          ],
         }}
-        transition={{ duration: 1.0, ease: "easeOut" }}
+        transition={{ duration: 2.6, ease: [0.12, 0.88, 0.28, 1.0], times: [0, 0.44, 0.87, 1] }}
       />
 
       {/* Card strip */}
@@ -442,6 +458,20 @@ function getCommanderTags(card: ScryfallCard): string[] {
   }
 
   return [...new Set(tags)].slice(0, 5)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getPartnerType — detect partner mechanic variant from oracle text
+// ─────────────────────────────────────────────────────────────────────────────
+type PartnerVariant = { type: "generic" } | { type: "with"; name: string } | { type: "background" }
+
+function getPartnerType(card: ScryfallCard): PartnerVariant | null {
+  const text = getCardOracleText(card).toLowerCase()
+  const withMatch = text.match(/partner with ([^\n(]+)/)
+  if (withMatch) return { type: "with", name: withMatch[1].trim().replace(/\.$/, "") }
+  if (/choose a background/.test(text)) return { type: "background" }
+  if (/\bpartner\b/.test(text)) return { type: "generic" }
+  return null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -630,6 +660,44 @@ function CommanderReveal({
     setFaceIndex(0)
   }
 
+  // ── Extra UI state ──
+  const [imageLoaded, setImageLoaded] = useState(false)
+  const [partnerCard, setPartnerCard] = useState<ScryfallCard | null>(null)
+  const [rollingPartner, setRollingPartner] = useState(false)
+  const [shareToast, setShareToast] = useState(false)
+  const [showRarityInfo, setShowRarityInfo] = useState(false)
+
+  const partnerType = getPartnerType(commander)
+
+  // Reset image skeleton and partner when commander changes
+  useEffect(() => { setImageLoaded(false); setPartnerCard(null) }, [commander.id])
+
+  const handleRollPartner = async () => {
+    if (rollingPartner) return
+    setRollingPartner(true)
+    try {
+      const partner = partnerType?.type === "background"
+        ? await fetchRandomBackground()
+        : await fetchRandomPartner(commander.id)
+      setPartnerCard(partner)
+    } catch { /* silent */ }
+    finally { setRollingPartner(false) }
+  }
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}?c=${commander.id}`
+    const text = `I rolled ${commander.name}${rarity ? ` — ${RARITY[rarity].label} tier` : ""}! 🎰`
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: "Random EDH Commander Generator", text, url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        setShareToast(true)
+        setTimeout(() => setShareToast(false), 2200)
+      }
+    } catch { /* cancelled */ }
+  }
+
   // ── Displayed image ──
   const source = selectedPrinting ?? commander
   const displayImage =
@@ -673,6 +741,12 @@ function CommanderReveal({
               }}
               transition={{ duration: 1.1, delay: 0.15, ease: "easeOut" }}
             >
+              {!imageLoaded && (
+                <div
+                  className="absolute inset-0 rounded-2xl animate-pulse"
+                  style={{ background: "oklch(13% 0.009 285)" }}
+                />
+              )}
               <Image
                 src={displayImage}
                 alt={commander.name}
@@ -680,6 +754,7 @@ function CommanderReveal({
                 height={672}
                 className="w-full h-auto"
                 priority
+                onLoad={() => setImageLoaded(true)}
               />
             </motion.div>
           </div>
@@ -788,10 +863,67 @@ function CommanderReveal({
                 ◆ {RARITY[rarity].label}
               </span>
               {edhrecRank !== null && (
-                <span style={{ fontFamily: "var(--font-raleway)", fontSize: "0.65rem", color: "oklch(42% 0.006 285)" }}>
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+                  style={{
+                    fontFamily: "var(--font-raleway)",
+                    background: "oklch(18% 0.012 285)",
+                    border: "1px solid oklch(32% 0.012 285)",
+                    color: "oklch(64% 0.018 285)",
+                  }}
+                >
                   #{edhrecRank} on EDHREC
                 </span>
               )}
+              {/* Rarity info popover */}
+              <div className="relative">
+                <button
+                  onMouseEnter={() => setShowRarityInfo(true)}
+                  onMouseLeave={() => setShowRarityInfo(false)}
+                  onFocus={() => setShowRarityInfo(true)}
+                  onBlur={() => setShowRarityInfo(false)}
+                  aria-label="Rarity tier information"
+                  className="flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none"
+                  style={{
+                    width: 18, height: 18,
+                    background: "oklch(18% 0.012 285)",
+                    border: "1px solid oklch(32% 0.012 285)",
+                    color: "oklch(48% 0.006 285)",
+                    fontSize: "0.6rem",
+                    fontFamily: "var(--font-raleway)",
+                    fontWeight: 700,
+                  }}
+                >
+                  ?
+                </button>
+                <AnimatePresence>
+                  {showRarityInfo && (
+                    <motion.div
+                      className="absolute z-20 bottom-full mb-2 left-0 rounded-xl p-3 min-w-[160px]"
+                      style={{
+                        background: "oklch(13% 0.012 285)",
+                        border: "1px solid oklch(28% 0.012 285)",
+                        boxShadow: "0 8px 32px oklch(5% 0.005 285 / 0.8)",
+                      }}
+                      initial={{ opacity: 0, y: 4, scale: 0.94 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.94 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {(Object.entries(RARITY) as [RarityTier, typeof RARITY[RarityTier]][]).map(([key, tier]) => (
+                        <div key={key} className="flex items-center justify-between gap-3 py-0.5">
+                          <span style={{ color: tier.color, fontSize: "0.68rem", fontFamily: "var(--font-cinzel)", fontWeight: 700 }}>
+                            ◆ {tier.label}
+                          </span>
+                          <span style={{ color: "oklch(44% 0.006 285)", fontSize: "0.62rem", fontFamily: "var(--font-raleway)" }}>
+                            {RARITY_RANKS[key]}
+                          </span>
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -851,6 +983,84 @@ function CommanderReveal({
           </motion.div>
         )}
 
+        {/* Partner / Background section */}
+        {partnerType && (
+          <motion.div
+            className="flex flex-col gap-2"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.55 }}
+          >
+            {(partnerType.type === "generic" || partnerType.type === "background") && (
+              <button
+                onClick={handleRollPartner}
+                disabled={rollingPartner}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-60 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
+                style={{
+                  background: "oklch(47% 0.24 292 / 0.07)",
+                  border: "1px solid oklch(47% 0.24 292 / 0.28)",
+                  color: "oklch(72% 0.18 295)",
+                  fontFamily: "var(--font-raleway)",
+                }}
+              >
+                {rollingPartner
+                  ? "Finding…"
+                  : partnerType.type === "background"
+                    ? "🎲 Roll a Background"
+                    : "🎲 Roll a Partner"}
+              </button>
+            )}
+            {partnerType.type === "with" && (
+              <p style={{ fontSize: "0.72rem", color: "oklch(48% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
+                Partners with{" "}
+                <a
+                  href={`https://edhrec.com/commanders/${partnerType.name.toLowerCase().replace(/[',]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ color: "oklch(72% 0.115 82)" }}
+                >
+                  {partnerType.name} ↗
+                </a>
+              </p>
+            )}
+            <AnimatePresence>
+              {partnerCard && (
+                <motion.div
+                  className="flex items-center gap-3 p-2.5 rounded-xl"
+                  style={{ background: "oklch(11% 0.009 285)", border: "1px solid oklch(100% 0 0 / 0.08)" }}
+                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  {getCardImage(partnerCard) && (
+                    <div className="flex-shrink-0 rounded-lg overflow-hidden" style={{ width: 46, border: "1px solid oklch(100% 0 0 / 0.12)" }}>
+                      <Image src={getCardImage(partnerCard)} alt={partnerCard.name} width={46} height={64} className="w-full h-auto block" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-xs font-semibold" style={{ fontFamily: "var(--font-cinzel)", color: "oklch(72% 0.115 82)" }}>
+                      {partnerCard.name}
+                    </p>
+                    <div className="flex gap-3 mt-1">
+                      <a href={`https://edhrec.com/commanders/${getEdhrecSlug(partnerCard)}`} target="_blank" rel="noopener noreferrer"
+                        className="text-[0.62rem] hover:opacity-80" style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
+                        EDHREC ↗
+                      </a>
+                      <a href={partnerCard.scryfall_uri} target="_blank" rel="noopener noreferrer"
+                        className="text-[0.62rem] hover:opacity-80" style={{ color: "oklch(50% 0.006 285)", fontFamily: "var(--font-raleway)" }}>
+                        Scryfall ↗
+                      </a>
+                    </div>
+                  </div>
+                  <button onClick={handleRollPartner} disabled={rollingPartner} title="Reroll"
+                    className="flex-shrink-0 opacity-40 hover:opacity-80 cursor-pointer disabled:cursor-not-allowed transition-opacity"
+                    style={{ color: "oklch(55% 0.006 285)", fontSize: "0.9rem" }}>
+                    ↺
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+
         <motion.div
           className="flex gap-3"
           initial={{ opacity: 0, y: 8 }}
@@ -878,22 +1088,123 @@ function CommanderReveal({
           </button>
         </motion.div>
 
+        {/* Share button */}
         <motion.div
-          className="flex gap-5 text-xs"
-          style={{ color: "oklch(42% 0.006 285)", fontFamily: "var(--font-raleway)" }}
+          className="relative"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.65 }}
+        >
+          <button
+            onClick={handleShare}
+            className="w-full py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/20 flex items-center justify-center gap-1.5"
+            style={{
+              background: "oklch(100% 0 0 / 0.03)",
+              border: "1px solid oklch(100% 0 0 / 0.1)",
+              color: "oklch(52% 0.006 285)",
+              fontFamily: "var(--font-raleway)",
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+            Share this commander
+          </button>
+          <AnimatePresence>
+            {shareToast && (
+              <motion.span
+                className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded text-[0.65rem] pointer-events-none whitespace-nowrap"
+                style={{ background: "oklch(18% 0.012 285)", color: "oklch(72% 0.115 82)", border: "1px solid oklch(32% 0.012 285)", fontFamily: "var(--font-raleway)" }}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                Link copied!
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        {/* External links + TCGPlayer */}
+        <motion.div
+          className="flex flex-wrap gap-2"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.7 }}
         >
-          <a href={`https://edhrec.com/commanders/${edhrecSlug}`} target="_blank" rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded">
-            EDHREC ↗
-          </a>
-          <a href={commander.scryfall_uri} target="_blank" rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-1 rounded">
-            Scryfall ↗
-          </a>
+          {[
+            { href: `https://edhrec.com/commanders/${edhrecSlug}`, label: "EDHREC", style: { background: "oklch(72% 0.115 82 / 0.1)", border: "1px solid oklch(72% 0.115 82 / 0.4)", color: "oklch(76% 0.115 82)", boxShadow: "0 0 18px oklch(72% 0.115 82 / 0.08)" } },
+            { href: commander.scryfall_uri, label: "Scryfall", style: { background: "oklch(47% 0.24 292 / 0.1)", border: "1px solid oklch(47% 0.24 292 / 0.38)", color: "oklch(76% 0.18 295)", boxShadow: "0 0 18px oklch(47% 0.24 292 / 0.08)" } },
+            ...(commander.purchase_uris?.cardmarket
+              ? [{ href: commander.purchase_uris.cardmarket, label: "Cardmarket", style: { background: "oklch(48% 0.16 240 / 0.1)", border: "1px solid oklch(48% 0.16 240 / 0.38)", color: "oklch(68% 0.16 240)", boxShadow: "0 0 18px oklch(48% 0.16 240 / 0.07)" } }]
+              : []),
+            ...(commander.purchase_uris?.tcgplayer
+              ? [{ href: commander.purchase_uris.tcgplayer, label: "TCGPlayer", style: { background: "oklch(55% 0.18 145 / 0.1)", border: "1px solid oklch(55% 0.18 145 / 0.35)", color: "oklch(70% 0.18 145)", boxShadow: "0 0 18px oklch(55% 0.18 145 / 0.06)" } }]
+              : []),
+          ].map(({ href, label, style }) => (
+            <a
+              key={label}
+              href={href}
+              target="_blank"
+              rel={(label === "TCGPlayer" || label === "Cardmarket") ? "noopener noreferrer sponsored" : "noopener noreferrer"}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-150 hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+              style={{ fontFamily: "var(--font-raleway)", ...style }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+              {label}
+            </a>
+          ))}
         </motion.div>
+      </div>
+    </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HistoryStrip — recent rolls shown in idle state, click to re-reveal
+// ─────────────────────────────────────────────────────────────────────────────
+function HistoryStrip({ history, onLoad }: { history: ScryfallCard[]; onLoad: (c: ScryfallCard) => void }) {
+  if (history.length === 0) return null
+  return (
+    <motion.div
+      className="w-full max-w-xs px-4"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.15, duration: 0.4 }}
+    >
+      <p
+        className="text-[0.58rem] tracking-[0.28em] uppercase mb-2.5 text-center"
+        style={{ color: "oklch(30% 0.006 285)", fontFamily: "var(--font-cinzel)" }}
+      >
+        Recent Rolls
+      </p>
+      <div className="flex gap-2.5 overflow-x-auto py-2 justify-center" style={{ scrollbarWidth: "none" }}>
+        {history.map((card) => {
+          const img = getCardImage(card)
+          return (
+            <motion.button
+              key={card.id}
+              onClick={() => onLoad(card)}
+              title={card.name}
+              aria-label={`Re-view ${card.name}`}
+              className="flex-shrink-0 rounded-lg overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/40"
+              style={{ width: 68, border: "1px solid oklch(100% 0 0 / 0.1)" }}
+              whileHover={{ scale: 1.1, y: 4, transition: { type: "spring", stiffness: 380, damping: 22 } }}
+              whileTap={{ scale: 0.92 }}
+            >
+              {img ? (
+                <Image src={img} alt={card.name} width={68} height={95} className="w-full h-auto block" />
+              ) : (
+                <div style={{ width: 68, height: 95, background: "oklch(11% 0.009 285)" }} />
+              )}
+            </motion.button>
+          )
+        })}
       </div>
     </motion.div>
   )
@@ -1095,8 +1406,31 @@ export default function Page() {
   const [saved, setSaved] = useState<ScryfallCard[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingRarity, setPendingRarity] = useState<RarityTier | null>(null)
+  const [history, setHistory] = useState<ScryfallCard[]>([])
 
   useEffect(() => { setSaved(getSaved()) }, [])
+
+  // Load a shared commander from ?c= URL param on mount
+  useEffect(() => {
+    const cid = new URLSearchParams(window.location.search).get("c")
+    if (!cid) return
+    fetchCommanderById(cid)
+      .then((card) => {
+        setCommander(card)
+        setAppState("revealed")
+        window.history.replaceState({}, "", window.location.pathname)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Keep a rolling history of the last 8 revealed commanders
+  useEffect(() => {
+    if (!commander || appState !== "revealed") return
+    setHistory((prev) => {
+      if (prev[0]?.id === commander.id) return prev
+      return [commander, ...prev].slice(0, 8)
+    })
+  }, [commander, appState])
 
   const isSaved = commander ? saved.some((c) => c.id === commander.id) : false
 
@@ -1172,6 +1506,13 @@ export default function Page() {
     setPendingRarity(null)
   }, [])
 
+  const handleLoadFromHistory = useCallback((card: ScryfallCard) => {
+    setCommander(card)
+    setFetchError(null)
+    setAppState("revealed")
+    setPendingRarity(null)
+  }, [])
+
   const colorKeys = Array.from(selectedColors) as ColorKey[]
   const theme = getColorTheme(colorKeys)
 
@@ -1188,6 +1529,16 @@ export default function Page() {
         <AmbientBlob color={theme.blobs[0]} style={{ left: "6%",  top: "10%",   width: 480, height: 480 }} delay={0} />
         <AmbientBlob color={theme.blobs[1]} style={{ right: "4%", top: "26%",   width: 360, height: 360 }} delay={5} />
         <AmbientBlob color={theme.blobs[2]} style={{ left: "20%", bottom: "6%", width: 400, height: 400 }} delay={9} />
+
+        {/* Spin glow — omnidirectional rarity burst; lives here to escape any overflow clipping */}
+        <AnimatePresence>
+          {appState === "spinning" && (
+            <SpinGlow
+              key="spin-glow"
+              rgb={pendingRarity ? RARITY[pendingRarity].rgb : "210,215,235"}
+            />
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ── Header ── */}
@@ -1287,6 +1638,7 @@ export default function Page() {
                   Press to summon a random commander from the multiverse
                 </p>
               )}
+              <HistoryStrip history={history} onLoad={handleLoadFromHistory} />
             </motion.div>
           )}
 
@@ -1331,10 +1683,10 @@ export default function Page() {
 
       {/* ── Footer ── */}
       <footer
-        className="py-5 text-center text-xs tracking-wide"
+        className="py-5 text-center text-xs tracking-wide leading-relaxed"
         style={{ color: "oklch(32% 0.005 285)", fontFamily: "var(--font-raleway)" }}
       >
-        Not affiliated with Wizards of the Coast · Card data from{" "}
+        Magic: The Gathering is ©Wizards of the Coast LLC · Not affiliated with WotC · Card data from{" "}
         <a
           href="https://scryfall.com"
           target="_blank"

@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 
+// Simple in-memory rate limiter: 60 requests per IP per minute
+const rl = new Map<string, { n: number; exp: number }>()
+function allowed(ip: string): boolean {
+  const now = Date.now()
+  const e = rl.get(ip)
+  if (!e || now > e.exp) { rl.set(ip, { n: 1, exp: now + 60_000 }); return true }
+  if (e.n >= 60) return false
+  e.n++; return true
+}
+
 function extractRank(data: unknown): number | null {
   if (data === null || typeof data !== "object") return null
   try {
@@ -24,6 +34,9 @@ function extractRank(data: unknown): number | null {
 // Returns { tags: string[], rank: number | null } always — never throws.
 // Cached server-side for 1 hour.
 export async function GET(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown"
+  if (!allowed(ip)) return NextResponse.json({ tags: [], rank: null }, { status: 429 })
+
   const slug = req.nextUrl.searchParams.get("slug")?.trim()
   if (!slug) return NextResponse.json({ tags: [], rank: null })
 

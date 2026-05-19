@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0d0a12"/>
+  <defs>
+    <radialGradient id="g" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#d4af37" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#d4af37" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="256" cy="256" rx="200" ry="200" fill="url(#g)"/>
+  <circle cx="256" cy="256" r="185" fill="none" stroke="#d4af37" stroke-width="6" stroke-opacity="0.25"/>
+  <!-- Diamond shape (rarity symbol) -->
+  <path d="M256 96 L416 256 L256 416 L96 256 Z" fill="none" stroke="#d4af37" stroke-width="14" stroke-linejoin="round"/>
+  <path d="M256 150 L362 256 L256 362 L150 256 Z" fill="#d4af3718" stroke="#d4af37" stroke-width="7" stroke-linejoin="round"/>
+  <circle cx="256" cy="256" r="24" fill="#d4af37"/>
+</svg>
